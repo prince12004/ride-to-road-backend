@@ -12,6 +12,10 @@ import { generalApiLimiter } from "./middleware/rateLimit";
 
 const app = express();
 
+// Behind Nginx / Render the client IP arrives in X-Forwarded-For. Without
+// this every request looks like it comes from the proxy, so the rate
+// limiters would throttle all users together as one IP.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
 app.use(helmet());
 app.use(cors({ origin: env.frontendUrl, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
