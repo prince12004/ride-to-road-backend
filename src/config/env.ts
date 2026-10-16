@@ -30,8 +30,11 @@ export const env = {
     keyId: process.env.RAZORPAY_KEY_ID ?? "",
     keySecret: process.env.RAZORPAY_KEY_SECRET ?? "",
   },
+  // Razorpay checkout stays off until explicitly enabled; bookings use
+  // Cash on Delivery / UPI QR in the meantime.
+  paymentGatewayEnabled: process.env.PAYMENT_GATEWAY_ENABLED === "true",
 
-  defaultWhatsappNumber: process.env.DEFAULT_WHATSAPP_NUMBER ?? "919310811124",
+  defaultWhatsappNumber: process.env.DEFAULT_WHATSAPP_NUMBER ?? "917303939372",
   frontendUrl: process.env.FRONTEND_URL ?? "http://localhost:3000",
 
   superAdminEmail: process.env.SUPER_ADMIN_EMAIL ?? "admin@ridetoroad.com",

@@ -5,6 +5,19 @@ import { User } from "../../models/User";
 import { Booking } from "../../models/Booking";
 import { VerificationStatus } from "../../types/enums";
 import { logActivity } from "../../services/activityLog.service";
+import { viewableDocumentUrl } from "../../services/upload.service";
+
+/** Refreshes expiring document links (PDFs) before sending a customer to the admin UI. */
+function withViewableDocuments<T extends { toObject(): any }>(customer: T) {
+  const data = customer.toObject();
+  if (data.verification?.documents) {
+    data.verification.documents = data.verification.documents.map((d: { url: string; publicId: string }) => ({
+      ...d,
+      url: viewableDocumentUrl(d),
+    }));
+  }
+  return data;
+}
 
 export const adminListCustomers = asyncHandler(async (req: Request, res: Response) => {
   const { search, verificationStatus, page = "1", limit = "20" } = req.query as Record<string, string>;
@@ -44,7 +57,7 @@ export const adminGetCustomer = asyncHandler(async (req: Request, res: Response)
   if (!customer) throw new ApiError(404, "Customer not found.");
 
   const bookings = await Booking.find({ user: customer._id }).populate("car", "name brand slug").sort("-createdAt");
-  res.json({ success: true, data: { customer, bookings } });
+  res.json({ success: true, data: { customer: withViewableDocuments(customer), bookings } });
 });
 
 export const adminSetCustomerBlockStatus = asyncHandler(async (req: Request, res: Response) => {
@@ -58,7 +71,7 @@ export const adminSetCustomerBlockStatus = asyncHandler(async (req: Request, res
 export const adminListVerificationRequests = asyncHandler(async (req: Request, res: Response) => {
   const { status = VerificationStatus.PENDING } = req.query as Record<string, string>;
   const customers = await User.find({ "verification.status": status }).sort("-verification.submittedAt");
-  res.json({ success: true, data: customers });
+  res.json({ success: true, data: customers.map(withViewableDocuments) });
 });
 
 export const adminReviewVerification = asyncHandler(async (req: Request, res: Response) => {
@@ -76,5 +89,5 @@ export const adminReviewVerification = asyncHandler(async (req: Request, res: Re
   await customer.save();
 
   await logActivity(req, { action: "verification_reviewed", module: "customers", recordId: String(customer._id), meta: { status } });
-  res.json({ success: true, data: customer });
+  res.json({ success: true, data: withViewableDocuments(customer) });
 });

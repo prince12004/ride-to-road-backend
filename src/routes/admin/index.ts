@@ -12,6 +12,7 @@ import adminUserRoutes from "./adminUser.routes";
 import activityLogRoutes from "./activityLog.routes";
 import dashboardRoutes from "./dashboard.routes";
 import uploadRoutes from "./upload.routes";
+import carLeadRoutes from "./carLead.routes";
 import {
   buildLocationsRouter,
   buildCouponsRouter,
@@ -41,6 +42,7 @@ router.use("/faqs", buildFaqsRouter());
 router.use("/testimonials", buildTestimonialsRouter());
 router.use("/journeys", buildJourneysRouter());
 router.use("/contact-enquiries", contactEnquiryRoutes);
+router.use("/car-leads", carLeadRoutes);
 router.use("/cms", cmsRoutes);
 router.use("/users", adminUserRoutes);
 router.use("/activity-logs", activityLogRoutes);

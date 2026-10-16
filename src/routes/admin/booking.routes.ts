@@ -2,7 +2,7 @@ import { Router } from "express";
 import * as adminBookingController from "../../controllers/admin/booking.controller";
 import { requirePermission } from "../../middleware/adminAuth";
 import { validateBody } from "../../middleware/validate";
-import { offlineBookingSchema, extendBookingSchema } from "../../validators/booking.validator";
+import { offlineBookingSchema, extendBookingSchema, reviewPaymentSchema, rejectPaymentSchema } from "../../validators/booking.validator";
 
 const router = Router();
 router.use(requirePermission("bookings"));
@@ -14,6 +14,8 @@ router.get("/:id", adminBookingController.adminGetBooking);
 router.patch("/:id/status", adminBookingController.adminUpdateBookingStatus);
 router.patch("/:id/notes", adminBookingController.adminAddBookingNote);
 router.post("/:id/extend", validateBody(extendBookingSchema), adminBookingController.adminExtendBooking);
+router.post("/:id/payment/verify", validateBody(reviewPaymentSchema), adminBookingController.adminVerifyPayment);
+router.post("/:id/payment/reject", validateBody(rejectPaymentSchema), adminBookingController.adminRejectPayment);
 router.post("/:id/cancel", adminBookingController.adminCancelBooking);
 
 export default router;

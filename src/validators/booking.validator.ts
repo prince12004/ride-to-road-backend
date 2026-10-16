@@ -15,6 +15,7 @@ export const initiateBookingSchema = z.object({
   specialRequest: z.string().max(1000).optional(),
   couponCode: z.string().optional(),
   homeDelivery: z.boolean().optional(),
+  paymentMethod: z.enum(["COD", "UPI_QR"], { errorMap: () => ({ message: "Choose a payment method" }) }),
 });
 
 export const verifyPaymentSchema = z.object({
@@ -66,3 +67,11 @@ export const extendBookingSchema = z
     message: "Select how the extension was paid",
     path: ["paymentMethod"],
   });
+
+export const reviewPaymentSchema = z.object({
+  note: z.string().max(500).optional(),
+});
+
+export const rejectPaymentSchema = z.object({
+  reason: z.string().min(3, "Tell the customer why the payment was rejected").max(500),
+});

@@ -81,6 +81,10 @@ export enum PaymentStatus {
 
 export enum PaymentMethod {
   RAZORPAY = "RAZORPAY",
+  // Temporary methods while the payment gateway is disabled:
+  COD = "COD", // pay in cash at pickup
+  UPI_QR = "UPI_QR", // scan our UPI QR, upload screenshot, admin verifies
+
   OFFLINE_CASH = "OFFLINE_CASH",
   OFFLINE_UPI = "OFFLINE_UPI",
   OFFLINE_OTHER = "OFFLINE_OTHER",
@@ -106,6 +110,13 @@ export enum DiscountType {
 export enum ContentStatus {
   DRAFT = "DRAFT",
   PUBLISHED = "PUBLISHED",
+}
+
+export enum CarLeadStatus {
+  NEW = "NEW",
+  CONTACTED = "CONTACTED",
+  ONBOARDED = "ONBOARDED",
+  REJECTED = "REJECTED",
 }
 
 export enum EnquiryStatus {

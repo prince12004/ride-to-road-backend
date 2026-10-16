@@ -5,23 +5,21 @@ import { Car } from "../models/Car";
 import { Location } from "../models/Location";
 import { Booking } from "../models/Booking";
 import { BookingStatusHistory } from "../models/BookingStatusHistory";
-import { CouponUsage } from "../models/CouponUsage";
-import { Coupon } from "../models/Coupon";
 import { Setting } from "../models/Setting";
 import { CarStatus, BookingStatus, PaymentStatus, PaymentMethod, BookingSource } from "../types/enums";
 import { combineDateAndTime, isCarAvailable } from "../services/availability.service";
 import { buildPriceBreakdown } from "../services/priceCalculator.service";
-import { validateCouponForBooking } from "../services/coupon.service";
+import { validateCouponForBooking, recordCouponUsage } from "../services/coupon.service";
 import { generateBookingId } from "../utils/bookingId";
-import { createRazorpayOrder, verifyRazorpaySignature, isRazorpayConfigured } from "../services/razorpay.service";
-import { env } from "../config/env";
+import { verifyRazorpaySignature } from "../services/razorpay.service";
+import { validateDocumentFile, uploadPrivateFile } from "../services/upload.service";
 
 export const initiateBooking = asyncHandler(async (req: Request, res: Response) => {
   const {
     carId, customerName, mobile, email, address,
     pickupLocationId, dropLocationId, pickupDate, pickupTime, dropDate, dropTime,
-    specialRequest, couponCode, homeDelivery,
-  } = req.body;
+    specialRequest, couponCode, homeDelivery, paymentMethod,
+  } = req.body as Record<string, any> & { paymentMethod: "COD" | "UPI_QR" };
 
   const car = await Car.findById(carId);
   if (!car) throw new ApiError(404, "Selected car was not found.");
@@ -78,6 +76,7 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
   });
 
   const bookingId = await generateBookingId();
+  const isCod = paymentMethod === "COD";
 
   const booking = await Booking.create({
     bookingId,
@@ -104,42 +103,57 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
     totalAmount: pricing.totalAmount,
     homeDelivery: { requested: deliveryRequested, fee: deliveryFee },
     specialRequest,
-    status: BookingStatus.PAYMENT_PENDING,
+    // COD confirms the booking right away (paid in cash at pickup). UPI QR
+    // stays payment-pending until an admin checks the uploaded screenshot.
+    status: isCod ? BookingStatus.CONFIRMED : BookingStatus.PAYMENT_PENDING,
     source: BookingSource.ONLINE,
-    payment: { status: PaymentStatus.PENDING },
+    payment: {
+      status: PaymentStatus.PENDING,
+      method: isCod ? PaymentMethod.COD : PaymentMethod.UPI_QR,
+      amount: pricing.totalAmount,
+    },
   });
 
   await BookingStatusHistory.create({
     booking: booking._id,
-    status: BookingStatus.PAYMENT_PENDING,
-    note: "Booking created, awaiting payment.",
+    status: booking.status,
+    note: isCod
+      ? "Booking confirmed — Cash on Delivery, to be paid at pickup."
+      : "Booking created — awaiting UPI payment screenshot.",
   });
 
-  if (!isRazorpayConfigured()) {
-    return res.status(201).json({
-      success: true,
-      data: { booking, razorpayConfigured: false },
-      message: "Booking saved. Online payment is not configured yet — our team will contact you to confirm.",
-    });
-  }
+  if (isCod) await recordCouponUsage(booking);
 
-  const order = await createRazorpayOrder({
-    amountInRupees: pricing.totalAmount,
-    receipt: bookingId,
-    notes: { bookingId, carName: car.name },
-  });
+  res.status(201).json({ success: true, data: { booking } });
+});
 
-  booking.payment.razorpayOrderId = order.orderId;
+// Customer uploads the screenshot of their UPI QR payment. The booking stays
+// payment-pending until an admin verifies it from the admin panel.
+export const uploadPaymentProof = asyncHandler(async (req: Request, res: Response) => {
+  const booking = await Booking.findOne({ bookingId: req.params.bookingId, user: req.user!.id });
+  if (!booking) throw new ApiError(404, "Booking not found.");
+  if (booking.payment.method !== PaymentMethod.UPI_QR) throw new ApiError(400, "This booking is not paid by UPI QR.");
+  if (booking.payment.status === PaymentStatus.PAID) throw new ApiError(400, "Payment for this booking is already verified.");
+  if (booking.status === BookingStatus.CANCELLED) throw new ApiError(400, "This booking has been cancelled.");
+
+  const file = req.file;
+  if (!file) throw new ApiError(400, "Please choose your payment screenshot.");
+  const kind = validateDocumentFile(file, { allowPdf: false });
+  const uploaded = await uploadPrivateFile(file.buffer, "payment-proofs", kind);
+
+  booking.payment.proof = { url: uploaded.url, publicId: uploaded.publicId, uploadedAt: new Date() };
+  booking.payment.status = PaymentStatus.PENDING;
+  booking.payment.failureReason = undefined;
+  if (booking.status === BookingStatus.PAYMENT_FAILED) booking.status = BookingStatus.PAYMENT_PENDING;
   await booking.save();
 
-  res.status(201).json({
-    success: true,
-    data: {
-      booking,
-      razorpayConfigured: true,
-      razorpayOrder: { orderId: order.orderId, amount: order.amount, currency: order.currency, keyId: env.razorpay.keyId },
-    },
+  await BookingStatusHistory.create({
+    booking: booking._id,
+    status: booking.status,
+    note: "Payment screenshot uploaded — awaiting verification.",
   });
+
+  res.json({ success: true, message: "Screenshot received. We'll verify your payment shortly.", data: { booking } });
 });
 
 export const verifyPayment = asyncHandler(async (req: Request, res: Response) => {
@@ -175,12 +189,7 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
 
   await BookingStatusHistory.create({ booking: booking._id, status: BookingStatus.CONFIRMED, note: "Payment successful. Booking confirmed." });
 
-  if (booking.coupon) {
-    await Promise.all([
-      Coupon.findByIdAndUpdate(booking.coupon, { $inc: { usedCount: 1 } }),
-      CouponUsage.create({ coupon: booking.coupon, mobile: booking.mobile, booking: booking._id, discountApplied: booking.discountAmount }),
-    ]);
-  }
+  await recordCouponUsage(booking);
 
   res.json({ success: true, data: { booking } });
 });
@@ -211,7 +220,16 @@ export const getBookingByBookingId = asyncHandler(async (req: Request, res: Resp
   if (!booking) throw new ApiError(404, "Booking not found.");
 
   const history = await BookingStatusHistory.find({ booking: booking._id }).sort("createdAt");
-  res.json({ success: true, data: { booking, history } });
+
+  // This endpoint is reachable by anyone holding the booking id, so never
+  // expose the payment screenshot link — only whether one was uploaded.
+  const data = booking.toObject();
+  if (data.payment?.proof?.url) {
+    data.payment.proof = { uploadedAt: data.payment.proof.uploadedAt } as typeof data.payment.proof;
+  }
+  delete (data.payment as { razorpaySignature?: string }).razorpaySignature;
+
+  res.json({ success: true, data: { booking: data, history } });
 });
 
 export const listMyBookings = asyncHandler(async (req: Request, res: Response) => {

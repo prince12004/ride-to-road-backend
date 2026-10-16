@@ -4,7 +4,7 @@ import { ApiError } from "../utils/ApiError";
 import { User } from "../models/User";
 import { Booking } from "../models/Booking";
 import { BookingStatus, VerificationStatus } from "../types/enums";
-import { validateImageFile, uploadBufferToCloudinary } from "../services/upload.service";
+import { validateDocumentFile, uploadPrivateFile } from "../services/upload.service";
 
 export const getDashboardSummary = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user!.id;
@@ -60,16 +60,34 @@ export const listMyBookingHistory = asyncHandler(async (req: Request, res: Respo
   res.json({ success: true, data: bookings });
 });
 
+export const VERIFICATION_DOCUMENT_TYPES = ["Aadhaar Card", "Driving Licence", "PAN Card", "Other Documents"] as const;
+const VERIFICATION_FOLDER = "verification-documents";
+
 export const submitVerification = asyncHandler(async (req: Request, res: Response) => {
   const { documents } = req.body as { documents: { type: string; url: string; publicId: string }[] };
-  if (!documents?.length) throw new ApiError(400, "At least one document is required.");
+  if (!Array.isArray(documents) || !documents.length) throw new ApiError(400, "At least one document is required.");
+
+  for (const doc of documents) {
+    if (!VERIFICATION_DOCUMENT_TYPES.includes(doc?.type as (typeof VERIFICATION_DOCUMENT_TYPES)[number])) {
+      throw new ApiError(400, "Unknown document type.");
+    }
+    // Only accept files that were uploaded through our own upload endpoint.
+    if (typeof doc.publicId !== "string" || !doc.publicId.startsWith(`ride-to-road/${VERIFICATION_FOLDER}/`) || typeof doc.url !== "string") {
+      throw new ApiError(400, "Please upload the document again.");
+    }
+  }
 
   const user = await User.findById(req.user!.id);
   if (!user) throw new ApiError(404, "User not found.");
 
+  // Merge by type: re-submitting one document must not drop the others
+  // already on file (e.g. adding a PAN after the Aadhaar was sent).
+  const incomingTypes = new Set(documents.map((d) => d.type));
+  const kept = (user.verification?.documents ?? []).filter((d) => !incomingTypes.has(d.type));
+
   user.verification = {
     status: VerificationStatus.PENDING,
-    documents,
+    documents: [...kept, ...documents.map(({ type, url, publicId }) => ({ type, url, publicId }))],
     rejectionReason: undefined,
     submittedAt: new Date(),
     reviewedAt: undefined,
@@ -81,14 +99,9 @@ export const submitVerification = asyncHandler(async (req: Request, res: Respons
 
 export const uploadMyDocumentFile = asyncHandler(async (req: Request, res: Response) => {
   const file = req.file;
-  if (!file) throw new ApiError(400, "No file was uploaded.");
+  if (!file) throw new ApiError(400, "Please choose a file to upload.");
 
-  try {
-    validateImageFile(file);
-  } catch (err) {
-    throw new ApiError(400, (err as Error).message);
-  }
-
-  const result = await uploadBufferToCloudinary(file.buffer, "verification-documents");
+  const kind = validateDocumentFile(file, { allowPdf: true });
+  const result = await uploadPrivateFile(file.buffer, VERIFICATION_FOLDER, kind);
   res.status(201).json({ success: true, data: result });
 });

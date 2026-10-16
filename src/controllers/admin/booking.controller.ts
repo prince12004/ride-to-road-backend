@@ -11,6 +11,7 @@ import { logActivity } from "../../services/activityLog.service";
 import { isCarAvailable, combineDateAndTime } from "../../services/availability.service";
 import { generateBookingId } from "../../utils/bookingId";
 import { calculateBaseAmount, calculateDurationHours } from "../../services/priceCalculator.service";
+import { recordCouponUsage } from "../../services/coupon.service";
 
 export const adminListBookings = asyncHandler(async (req: Request, res: Response) => {
   const { status, paymentStatus, car, customer, dateFrom, dateTo, page = "1", limit = "20" } = req.query as Record<string, string>;
@@ -196,6 +197,79 @@ export const adminExtendBooking = asyncHandler(async (req: Request, res: Respons
     recordId: String(booking._id),
     meta: { previousDropAt, newDropAt, amount: extensionAmount, paymentStatus },
   });
+
+  res.json({ success: true, data: booking });
+});
+
+// Manual payment review for the temporary (gateway-less) payment methods:
+// UPI QR screenshots are checked by the team; COD is marked paid once the
+// cash is collected at pickup.
+export const adminVerifyPayment = asyncHandler(async (req: Request, res: Response) => {
+  const { note } = req.body as { note?: string };
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) throw new ApiError(404, "Booking not found.");
+
+  const method = booking.payment.method;
+  if (method !== PaymentMethod.UPI_QR && method !== PaymentMethod.COD) {
+    throw new ApiError(400, "Only UPI QR and Cash on Delivery payments are verified manually.");
+  }
+  if (booking.payment.status === PaymentStatus.PAID) throw new ApiError(400, "This payment is already marked as paid.");
+  if (booking.status === BookingStatus.CANCELLED) throw new ApiError(400, "This booking is cancelled.");
+  if (method === PaymentMethod.UPI_QR && !booking.payment.proof?.url) {
+    throw new ApiError(400, "The customer hasn't uploaded a payment screenshot yet.");
+  }
+
+  const confirming = booking.status === BookingStatus.PAYMENT_PENDING || booking.status === BookingStatus.PAYMENT_FAILED;
+  if (confirming) {
+    const available = await isCarAvailable({ carId: booking.car, pickupAt: booking.pickupAt, dropAt: booking.dropAt, excludeBookingId: booking._id });
+    if (!available) throw new ApiError(409, "This car now has another confirmed booking for these dates. Contact the customer before confirming.");
+    booking.status = BookingStatus.CONFIRMED;
+  }
+
+  booking.payment.status = PaymentStatus.PAID;
+  booking.payment.amount = booking.totalAmount;
+  booking.payment.paidAt = new Date();
+  booking.payment.failureReason = undefined;
+  booking.payment.reviewNote = note;
+  booking.payment.reviewedAt = new Date();
+  await booking.save();
+
+  await recordCouponUsage(booking);
+  await BookingStatusHistory.create({
+    booking: booking._id,
+    status: booking.status,
+    note:
+      (method === PaymentMethod.COD ? "Cash payment received." : "UPI payment verified.") +
+      (confirming ? " Booking confirmed." : "") +
+      (note ? ` — ${note}` : ""),
+    changedByAdmin: req.admin!.id,
+  });
+  await logActivity(req, { action: "booking_payment_verified", module: "bookings", recordId: String(booking._id), meta: { method } });
+
+  res.json({ success: true, data: booking });
+});
+
+export const adminRejectPayment = asyncHandler(async (req: Request, res: Response) => {
+  const { reason } = req.body as { reason: string };
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) throw new ApiError(404, "Booking not found.");
+  if (booking.payment.method !== PaymentMethod.UPI_QR) throw new ApiError(400, "Only UPI QR payments can be rejected.");
+  if (booking.payment.status === PaymentStatus.PAID) throw new ApiError(400, "This payment is already verified.");
+
+  booking.payment.status = PaymentStatus.FAILED;
+  booking.payment.failureReason = reason;
+  booking.payment.reviewNote = reason;
+  booking.payment.reviewedAt = new Date();
+  if (booking.status === BookingStatus.PAYMENT_PENDING) booking.status = BookingStatus.PAYMENT_FAILED;
+  await booking.save();
+
+  await BookingStatusHistory.create({
+    booking: booking._id,
+    status: booking.status,
+    note: `Payment screenshot rejected — ${reason}`,
+    changedByAdmin: req.admin!.id,
+  });
+  await logActivity(req, { action: "booking_payment_rejected", module: "bookings", recordId: String(booking._id) });
 
   res.json({ success: true, data: booking });
 });

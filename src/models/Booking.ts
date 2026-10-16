@@ -57,6 +57,9 @@ export interface IBooking extends Document {
     amount?: number;
     paidAt?: Date;
     failureReason?: string;
+    proof?: { url: string; publicId: string; uploadedAt: Date };
+    reviewNote?: string;
+    reviewedAt?: Date;
   };
 
   status: BookingStatus;
@@ -124,6 +127,14 @@ const bookingSchema = new Schema<IBooking>(
       amount: { type: Number },
       paidAt: { type: Date },
       failureReason: { type: String },
+      // UPI QR: customer's payment screenshot, verified manually by admin.
+      proof: {
+        url: { type: String },
+        publicId: { type: String },
+        uploadedAt: { type: Date },
+      },
+      reviewNote: { type: String },
+      reviewedAt: { type: Date },
     },
 
     status: { type: String, enum: Object.values(BookingStatus), default: BookingStatus.PAYMENT_PENDING },

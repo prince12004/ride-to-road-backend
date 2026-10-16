@@ -24,7 +24,7 @@ const settingSchema = new Schema<ISetting>(
     key: { type: String, default: "GLOBAL", unique: true },
     companyName: { type: String, default: "Ride to Road" },
     logo: { url: String, publicId: String },
-    whatsappNumber: { type: String, default: "919310811124" },
+    whatsappNumber: { type: String, default: "917303939372" },
     phone: { type: String },
     email: { type: String },
     address: { type: String },

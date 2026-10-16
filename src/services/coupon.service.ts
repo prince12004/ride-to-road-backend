@@ -41,3 +41,22 @@ export async function validateCouponForBooking({
   const discountAmount = calculateCouponDiscount(coupon, baseAmount);
   return { coupon, discountAmount };
 }
+
+/**
+ * Counts a booking's coupon against its limits once the booking is actually
+ * confirmed/paid. Idempotent per booking, so calling it again is harmless.
+ */
+export async function recordCouponUsage(booking: {
+  _id: Types.ObjectId;
+  coupon?: Types.ObjectId;
+  mobile: string;
+  discountAmount: number;
+}): Promise<void> {
+  if (!booking.coupon) return;
+  const alreadyRecorded = await CouponUsage.exists({ booking: booking._id });
+  if (alreadyRecorded) return;
+  await Promise.all([
+    Coupon.findByIdAndUpdate(booking.coupon, { $inc: { usedCount: 1 } }),
+    CouponUsage.create({ coupon: booking.coupon, mobile: booking.mobile, booking: booking._id, discountApplied: booking.discountAmount }),
+  ]);
+}
