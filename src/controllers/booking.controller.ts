@@ -14,11 +14,16 @@ import { generateBookingId } from "../utils/bookingId";
 import { verifyRazorpaySignature } from "../services/razorpay.service";
 import { validateDocumentFile, uploadPrivateFile } from "../services/upload.service";
 
+function maskAddress(address: string): string {
+  const visible = address.slice(0, Math.min(12, Math.ceil(address.length / 3)));
+  return `${visible}… (full address visible when logged in)`;
+}
+
 export const initiateBooking = asyncHandler(async (req: Request, res: Response) => {
   const {
     carId, customerName, mobile, email, address,
     pickupLocationId, dropLocationId, pickupDate, pickupTime, dropDate, dropTime,
-    specialRequest, couponCode, homeDelivery, paymentMethod,
+    specialRequest, couponCode, homeDelivery, deliveryAddress, paymentMethod,
   } = req.body as Record<string, any> & { paymentMethod: "COD" | "UPI_QR" };
 
   const car = await Car.findById(carId);
@@ -50,6 +55,10 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
 
   const deliveryRequested = Boolean(homeDelivery) && Boolean(car.homeDelivery?.available);
   const deliveryFee = deliveryRequested ? car.homeDelivery.price : 0;
+  const deliveryAddr = typeof deliveryAddress === "string" ? deliveryAddress.trim() : "";
+  if (deliveryRequested && deliveryAddr.length < 10) {
+    throw new ApiError(400, "Please enter the complete delivery address (house no., street, area, city).");
+  }
 
   let appliedCoupon = null;
   const draftPricing = buildPriceBreakdown({
@@ -103,7 +112,7 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
     securityDeposit: pricing.securityDeposit,
     totalAmount: pricing.totalAmount,
     termsAcceptedAt: new Date(),
-    homeDelivery: { requested: deliveryRequested, fee: deliveryFee },
+    homeDelivery: { requested: deliveryRequested, fee: deliveryFee, address: deliveryRequested ? deliveryAddr : undefined },
     specialRequest,
     // COD confirms the booking right away (paid in cash at pickup). UPI QR
     // stays payment-pending until an admin checks the uploaded screenshot.
@@ -230,6 +239,11 @@ export const getBookingByBookingId = asyncHandler(async (req: Request, res: Resp
     data.payment.proof = { uploadedAt: data.payment.proof.uploadedAt } as typeof data.payment.proof;
   }
   delete (data.payment as { razorpaySignature?: string }).razorpaySignature;
+  // Booking ids are sequential, so this public view only hints at the
+  // address; the owner sees it in full via /bookings/me/:id.
+  if (data.homeDelivery?.address) {
+    data.homeDelivery.address = maskAddress(data.homeDelivery.address);
+  }
 
   res.json({ success: true, data: { booking: data, history } });
 });

@@ -47,6 +47,8 @@ export interface IBooking extends Document {
   homeDelivery: {
     requested: boolean;
     fee: number;
+    /** Where to drop the car; required when delivery is requested. */
+    address?: string;
   };
 
   payment: {
@@ -120,6 +122,7 @@ const bookingSchema = new Schema<IBooking>(
     homeDelivery: {
       requested: { type: Boolean, default: false },
       fee: { type: Number, default: 0 },
+      address: { type: String, trim: true },
     },
 
     payment: {
