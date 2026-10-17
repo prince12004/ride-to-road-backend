@@ -36,6 +36,10 @@ export const env = {
 
   defaultWhatsappNumber: process.env.DEFAULT_WHATSAPP_NUMBER ?? "917303939372",
   frontendUrl: process.env.FRONTEND_URL ?? "http://localhost:3000",
+  // On-demand revalidation of the Next.js site after admin changes. Both
+  // must be set (and REVALIDATE_SECRET must match the frontend) to enable it.
+  frontendRevalidateUrl: process.env.FRONTEND_REVALIDATE_URL ?? "",
+  revalidateSecret: process.env.REVALIDATE_SECRET ?? "",
 
   superAdminEmail: process.env.SUPER_ADMIN_EMAIL ?? "admin@ridetoroad.com",
   superAdminPassword: process.env.SUPER_ADMIN_PASSWORD ?? "ChangeMe123!",

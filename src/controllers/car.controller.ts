@@ -37,7 +37,8 @@ export const listCars = asyncHandler(async (req: Request, res: Response) => {
 
   const [cars, total] = await Promise.all([
     Car.find(query)
-      .sort("-createdAt")
+      // Cars the admin marks "Featured" lead every list, newest first after that.
+      .sort("-isFeatured -createdAt")
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum),
     Car.countDocuments(query),

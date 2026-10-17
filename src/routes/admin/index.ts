@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireAdminAuth } from "../../middleware/adminAuth";
+import { revalidateOnAdminWrite } from "../../services/revalidate.service";
 
 import adminAuthRoutes from "./adminAuth.routes";
 import carRoutes from "./car.routes";
@@ -28,6 +29,7 @@ const router = Router();
 router.use("/auth", adminAuthRoutes);
 
 router.use(requireAdminAuth);
+router.use(revalidateOnAdminWrite);
 
 router.use("/dashboard", dashboardRoutes);
 router.use("/cars", carRoutes);
