@@ -11,11 +11,13 @@ import { serializeCarSummary, serializeCarDetail } from "../utils/serializers";
 export const listCars = asyncHandler(async (req: Request, res: Response) => {
   const {
     category, transmission, fuel, location, city, minPrice, maxPrice, search, featured,
-    pickupDate, pickupTime, dropDate, dropTime,
+    pickupDate, pickupTime, dropDate, dropTime, availableOnly, sort,
     page = "1", limit = "100",
   } = req.query as Record<string, string>;
 
   const query: Record<string, unknown> = { status: { $ne: CarStatus.INACTIVE } };
+  // availableOnly=true hides cars shown as "Sold Out" (booked / under maintenance).
+  if (availableOnly === "true") query.status = CarStatus.AVAILABLE;
   if (category) query.category = category;
   if (transmission) query.transmission = transmission;
   if (fuel) query.fuel = fuel;
@@ -45,7 +47,7 @@ export const listCars = asyncHandler(async (req: Request, res: Response) => {
   const [cars, total] = await Promise.all([
     Car.find(query)
       // Cars the admin marks "Featured" lead every list, newest first after that.
-      .sort("-isFeatured -createdAt")
+      .sort(sort === "latest" ? "-createdAt" : "-isFeatured -createdAt")
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum),
     Car.countDocuments(query),
