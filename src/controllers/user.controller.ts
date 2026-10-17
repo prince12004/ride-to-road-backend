@@ -60,7 +60,18 @@ export const listMyBookingHistory = asyncHandler(async (req: Request, res: Respo
   res.json({ success: true, data: bookings });
 });
 
-export const VERIFICATION_DOCUMENT_TYPES = ["Aadhaar Card", "Driving Licence", "PAN Card", "Other Documents"] as const;
+export const VERIFICATION_DOCUMENT_TYPES = [
+  "Aadhaar Card (Front)",
+  "Aadhaar Card (Back)",
+  "Driving Licence (Front)",
+  "Driving Licence (Back)",
+  "PAN Card",
+  "Other Documents",
+  // Single-image types used before front/back were split — still accepted so
+  // earlier submissions stay valid.
+  "Aadhaar Card",
+  "Driving Licence",
+] as const;
 const VERIFICATION_FOLDER = "verification-documents";
 
 export const submitVerification = asyncHandler(async (req: Request, res: Response) => {

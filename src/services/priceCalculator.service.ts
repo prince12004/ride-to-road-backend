@@ -8,6 +8,8 @@ export interface PriceBreakdown {
   additionalCharges: number;
   taxAmount: number;
   discountAmount: number;
+  /** Refundable deposit, collected with the booking. Never taxed or discounted. */
+  securityDeposit: number;
   totalAmount: number;
 }
 
@@ -80,7 +82,8 @@ export function buildPriceBreakdown({
   const discountAmount = coupon ? calculateCouponDiscount(coupon, baseAmount) : 0;
   const taxableAmount = Math.max(0, baseAmount + additionalCharges - discountAmount);
   const taxAmount = Math.round((taxableAmount * taxPercent) / 100);
-  const totalAmount = taxableAmount + taxAmount;
+  const securityDeposit = Math.max(0, Math.round(car.securityDeposit ?? 0));
+  const totalAmount = taxableAmount + taxAmount + securityDeposit;
 
-  return { durationHours, baseAmount, additionalCharges, taxAmount, discountAmount, totalAmount };
+  return { durationHours, baseAmount, additionalCharges, taxAmount, discountAmount, securityDeposit, totalAmount };
 }

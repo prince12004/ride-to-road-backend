@@ -39,6 +39,7 @@ export interface IBooking extends Document {
   additionalCharges: number;
   taxAmount: number;
   discountAmount: number;
+  securityDeposit: number;
   totalAmount: number;
   extensionCharges: number;
   extensions: IBookingExtension[];
@@ -66,6 +67,7 @@ export interface IBooking extends Document {
   source: BookingSource;
   specialRequest?: string;
   adminNotes?: string;
+  termsAcceptedAt?: Date;
 
   createdAt: Date;
   updatedAt: Date;
@@ -97,6 +99,8 @@ const bookingSchema = new Schema<IBooking>(
     additionalCharges: { type: Number, default: 0 },
     taxAmount: { type: Number, default: 0 },
     discountAmount: { type: Number, default: 0 },
+    // Refundable deposit, already included in totalAmount.
+    securityDeposit: { type: Number, default: 0 },
     totalAmount: { type: Number, required: true },
     extensionCharges: { type: Number, default: 0 },
     extensions: [
@@ -141,6 +145,7 @@ const bookingSchema = new Schema<IBooking>(
     source: { type: String, enum: Object.values(BookingSource), default: BookingSource.ONLINE },
     specialRequest: { type: String },
     adminNotes: { type: String },
+    termsAcceptedAt: { type: Date },
   },
   { timestamps: true }
 );

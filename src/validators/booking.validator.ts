@@ -16,6 +16,7 @@ export const initiateBookingSchema = z.object({
   couponCode: z.string().optional(),
   homeDelivery: z.boolean().optional(),
   paymentMethod: z.enum(["COD", "UPI_QR"], { errorMap: () => ({ message: "Choose a payment method" }) }),
+  termsAccepted: z.literal(true, { errorMap: () => ({ message: "Please accept the Terms & Conditions" }) }),
 });
 
 export const verifyPaymentSchema = z.object({

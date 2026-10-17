@@ -100,7 +100,9 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
     additionalCharges: pricing.additionalCharges,
     taxAmount: pricing.taxAmount,
     discountAmount: pricing.discountAmount,
+    securityDeposit: pricing.securityDeposit,
     totalAmount: pricing.totalAmount,
+    termsAcceptedAt: new Date(),
     homeDelivery: { requested: deliveryRequested, fee: deliveryFee },
     specialRequest,
     // COD confirms the booking right away (paid in cash at pickup). UPI QR
