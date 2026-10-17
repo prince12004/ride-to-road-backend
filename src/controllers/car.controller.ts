@@ -20,9 +20,16 @@ export const listCars = asyncHandler(async (req: Request, res: Response) => {
   if (transmission) query.transmission = transmission;
   if (fuel) query.fuel = fuel;
   if (location) query.location = location;
+  let cityLocationId: string | null = null;
   if (city) {
     const loc = await Location.findOne({ city: { $regex: `^${city}$`, $options: "i" } });
-    query.location = loc ? loc._id : null; // no match -> empty result set, not "ignore filter"
+    if (loc?.showAllCars) {
+      // Admin chose to offer the whole fleet in this city (e.g. via delivery);
+      // cars based here are still listed first below.
+      cityLocationId = String(loc._id);
+    } else {
+      query.location = loc ? loc._id : null; // no match -> empty result set, not "ignore filter"
+    }
   }
   if (featured === "true") query.isFeatured = true;
   if (minPrice || maxPrice) {
@@ -43,6 +50,11 @@ export const listCars = asyncHandler(async (req: Request, res: Response) => {
       .limit(limitNum),
     Car.countDocuments(query),
   ]);
+
+  if (cityLocationId) {
+    // Stable sort: cars based in the searched city first, order otherwise kept.
+    cars.sort((a, b) => Number(String(b.location) === cityLocationId) - Number(String(a.location) === cityLocationId));
+  }
 
   let unavailableCarIds = new Set<string>();
   if (pickupDate && pickupTime && dropDate && dropTime) {

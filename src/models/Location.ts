@@ -7,6 +7,8 @@ export interface ILocation extends Document {
   address?: string;
   image?: { url: string; publicId: string };
   isActive: boolean;
+  /** Searching this city lists the whole fleet, not just cars based here. */
+  showAllCars: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -19,6 +21,7 @@ const locationSchema = new Schema<ILocation>(
     address: { type: String, trim: true },
     image: { url: String, publicId: String },
     isActive: { type: Boolean, default: true },
+    showAllCars: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
