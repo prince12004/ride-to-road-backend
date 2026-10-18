@@ -8,6 +8,7 @@ router.use(requirePermission("customers"));
 router.get("/", adminCustomerController.adminListCustomers);
 router.get("/verification-requests", adminCustomerController.adminListVerificationRequests);
 router.get("/:id", adminCustomerController.adminGetCustomer);
+router.delete("/:id", adminCustomerController.adminDeleteCustomer);
 router.patch("/:id/block-status", adminCustomerController.adminSetCustomerBlockStatus);
 router.patch("/:id/verification", adminCustomerController.adminReviewVerification);
 

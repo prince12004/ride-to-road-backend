@@ -4,7 +4,7 @@ import { ApiError } from "../utils/ApiError";
 import { User } from "../models/User";
 import { Booking } from "../models/Booking";
 import { BookingStatus, VerificationStatus } from "../types/enums";
-import { validateDocumentFile, uploadPrivateFile } from "../services/upload.service";
+import { validateDocumentFile, uploadPrivateFile, deletePrivateFile } from "../services/upload.service";
 
 export const getDashboardSummary = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user!.id;
@@ -43,10 +43,11 @@ export const getDashboardSummary = asyncHandler(async (req: Request, res: Respon
 });
 
 export const updateProfile = asyncHandler(async (req: Request, res: Response) => {
-  const { name, email, address, city, state, pincode, profileImage } = req.body;
+  // The profile photo is changed only through uploadProfileImage, never from a client-supplied URL.
+  const { name, email, address, city, state, pincode } = req.body;
   const user = await User.findByIdAndUpdate(
     req.user!.id,
-    { name, email, address, city, state, pincode, ...(profileImage ? { profileImage } : {}) },
+    { name, email, address, city, state, pincode },
     { new: true, runValidators: true }
   );
   if (!user) throw new ApiError(404, "User not found.");
@@ -115,4 +116,34 @@ export const uploadMyDocumentFile = asyncHandler(async (req: Request, res: Respo
   const kind = validateDocumentFile(file, { allowPdf: true });
   const result = await uploadPrivateFile(file.buffer, VERIFICATION_FOLDER, kind);
   res.status(201).json({ success: true, data: result });
+});
+
+const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+
+// Uploads (or replaces) the customer's profile photo: JPG/PNG/WEBP up to 2MB,
+// stored privately like KYC files; the previous photo is removed.
+export const uploadProfileImage = asyncHandler(async (req: Request, res: Response) => {
+  const file = req.file;
+  if (!file) throw new ApiError(400, "Please choose a photo to upload.");
+  if (file.size > PROFILE_IMAGE_MAX_BYTES) throw new ApiError(400, "Photo must be under 2MB.");
+  const kind = validateDocumentFile(file, { allowPdf: false });
+
+  const user = await User.findById(req.user!.id);
+  if (!user) throw new ApiError(404, "User not found.");
+  const previous = user.profileImage?.publicId;
+
+  user.profileImage = await uploadPrivateFile(file.buffer, "profile-images", kind);
+  await user.save();
+  if (previous) await deletePrivateFile(previous);
+  res.status(201).json({ success: true, data: { profileImage: { url: user.profileImage.url } } });
+});
+
+export const removeProfileImage = asyncHandler(async (req: Request, res: Response) => {
+  const user = await User.findById(req.user!.id);
+  if (!user) throw new ApiError(404, "User not found.");
+  const previous = user.profileImage?.publicId;
+  user.profileImage = undefined;
+  await user.save();
+  if (previous) await deletePrivateFile(previous);
+  res.json({ success: true, message: "Profile photo removed." });
 });

@@ -38,8 +38,15 @@ export function isCarOfferedIn(car: CarCities, city: CityRef): boolean {
   return String(car.location) === id || (car.cities ?? []).some((c) => String(c) === id);
 }
 
+/** India has no DST, so IST is always UTC+05:30. */
+const IST_OFFSET_MINUTES = 330;
+
+/**
+ * Turns the date ("YYYY-MM-DD") and time ("HH:MM" or "h:mm AM") a customer
+ * picked into an instant, always read as India time — never the server's own
+ * time zone (the VPS runs on UTC).
+ */
 export function combineDateAndTime(dateStr: string, timeStr: string): Date {
-  const datePart = new Date(dateStr);
   const [time, meridiem] = timeStr.trim().split(/\s+/);
   let [hours, minutes] = time.split(":").map(Number);
 
@@ -49,7 +56,8 @@ export function combineDateAndTime(dateStr: string, timeStr: string): Date {
     if (upper === "AM" && hours === 12) hours = 0;
   }
 
-  const combined = new Date(datePart);
-  combined.setHours(hours, minutes || 0, 0, 0);
-  return combined;
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr.trim());
+  if (!ymd) return new Date(NaN);
+  const [, y, m, d] = ymd.map(Number);
+  return new Date(Date.UTC(y, m - 1, d, hours, (minutes || 0) - IST_OFFSET_MINUTES));
 }

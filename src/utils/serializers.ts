@@ -44,6 +44,7 @@ export function serializeCarDetail(car: PopulatedCar) {
     weeklyPrice: obj.weeklyPrice,
     monthlyPrice: obj.monthlyPrice,
     securityDeposit: obj.securityDeposit,
+    extraKmRate: obj.extraKmRate ?? 0,
     description: obj.description,
     features: obj.features,
     specifications: obj.specifications,

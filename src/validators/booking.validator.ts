@@ -81,6 +81,7 @@ export const collectPaymentSchema = z
   .object({
     cashAmount: money.optional(),
     onlineAmount: money.optional(),
+    onlineMethod: z.enum(["UPI", "BANK_TRANSFER", "CARD", "OTHER"]).optional(),
     reference: z.string().trim().max(60).optional(),
     receivedAt: z.string().optional(),
     note: z.string().max(500).optional(),
@@ -93,3 +94,53 @@ export const collectPaymentSchema = z
     message: "Enter the UTR / transaction ID for the online payment",
     path: ["reference"],
   });
+
+const timeStr = z.string().regex(/^\d{2}:\d{2}$/, "Use HH:MM");
+const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
+
+export const editBookingSchema = z
+  .object({
+    customerName: z.string().trim().min(2, "Enter the customer's name").max(80).optional(),
+    mobile: z.string().trim().regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit mobile number").optional(),
+    email: z.union([z.string().trim().email("Enter a valid email"), z.literal("")]).optional(),
+    address: z.string().max(500).optional(),
+    specialRequest: z.string().max(1000).optional(),
+    pickupLocationId: z.string().regex(/^[a-f\d]{24}$/i, "Invalid location").optional(),
+    deliveryAddress: z.string().max(500).optional(),
+    pickupDate: dateStr.optional(),
+    pickupTime: timeStr.optional(),
+    dropDate: dateStr.optional(),
+    dropTime: timeStr.optional(),
+  })
+  .refine(
+    (v) => {
+      const n = [v.pickupDate, v.pickupTime, v.dropDate, v.dropTime].filter(Boolean).length;
+      return n === 0 || n === 4;
+    },
+    { message: "Give pickup and return date and time together", path: ["dropDate"] },
+  );
+
+const km = z.number({ invalid_type_error: "Enter a number" }).nonnegative().max(1_000_000);
+
+export const closeBookingSchema = z
+  .object({
+    closedAt: z.string().optional(),
+    odometerStart: km.optional(),
+    odometerEnd: km.optional(),
+    kmDriven: km.optional(),
+    otherCharges: money.optional(),
+    otherChargesNote: z.string().max(300).optional(),
+    notes: z.string().max(1000).optional(),
+  })
+  .refine((v) => v.kmDriven !== undefined || (v.odometerStart !== undefined && v.odometerEnd !== undefined), {
+    message: "Enter the km driven or both odometer readings",
+    path: ["kmDriven"],
+  })
+  .refine((v) => v.odometerStart === undefined || v.odometerEnd === undefined || v.odometerEnd >= v.odometerStart, {
+    message: "End reading can't be less than the start reading",
+    path: ["odometerEnd"],
+  });
+
+export const deleteBookingSchema = z.object({
+  reason: z.string().trim().min(3, "Give a reason for deleting this booking").max(500),
+});

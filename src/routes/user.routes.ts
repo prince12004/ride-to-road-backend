@@ -8,6 +8,8 @@ router.use(requireAuth);
 
 router.get("/dashboard-summary", userController.getDashboardSummary);
 router.put("/profile", userController.updateProfile);
+router.post("/profile/image", upload.single("file"), userController.uploadProfileImage);
+router.delete("/profile/image", userController.removeProfileImage);
 router.get("/bookings", userController.listMyBookingHistory);
 router.post("/verification", userController.submitVerification);
 router.post("/verification/upload", upload.single("file"), userController.uploadMyDocumentFile);

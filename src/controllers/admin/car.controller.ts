@@ -101,7 +101,7 @@ export const adminUpdateCar = asyncHandler(async (req: Request, res: Response) =
 export const adminDeleteCar = asyncHandler(async (req: Request, res: Response) => {
   // Deleting a car that bookings point to breaks those bookings (and the
   // admin pages listing them). Keep the record; hide it from the site instead.
-  const bookingCount = await Booking.countDocuments({ car: req.params.id });
+  const bookingCount = await Booking.countDocuments({ car: req.params.id }).setOptions({ includeDeleted: true });
   if (bookingCount > 0) {
     throw new ApiError(
       409,

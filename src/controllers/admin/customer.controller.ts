@@ -5,7 +5,7 @@ import { User } from "../../models/User";
 import { Booking } from "../../models/Booking";
 import { VerificationStatus } from "../../types/enums";
 import { logActivity } from "../../services/activityLog.service";
-import { viewableDocumentUrl } from "../../services/upload.service";
+import { viewableDocumentUrl, deletePrivateFile } from "../../services/upload.service";
 
 /** Refreshes expiring document links (PDFs) before sending a customer to the admin UI. */
 function withViewableDocuments<T extends { toObject(): any }>(customer: T) {
@@ -90,4 +90,23 @@ export const adminReviewVerification = asyncHandler(async (req: Request, res: Re
 
   await logActivity(req, { action: "verification_reviewed", module: "customers", recordId: String(customer._id), meta: { status } });
   res.json({ success: true, data: withViewableDocuments(customer) });
+});
+
+// Deletes a customer account that has never booked. Customers with bookings
+// (including deleted ones) are kept for the financial record — block them instead.
+export const adminDeleteCustomer = asyncHandler(async (req: Request, res: Response) => {
+  if (!["SUPER_ADMIN", "ADMIN"].includes(req.admin!.role)) {
+    throw new ApiError(403, "Only an Admin or Super Admin can delete customers.");
+  }
+  const customer = await User.findById(req.params.id);
+  if (!customer) throw new ApiError(404, "Customer not found.");
+  const bookings = await Booking.countDocuments({ $or: [{ user: customer._id }, { mobile: customer.mobile }] }).setOptions({ includeDeleted: true });
+  if (bookings) {
+    throw new ApiError(409, `This customer has ${bookings} booking(s), so the account can't be deleted. Block the customer instead.`);
+  }
+  const files = [customer.profileImage?.publicId, ...(customer.verification?.documents ?? []).map((d) => d.publicId)].filter(Boolean) as string[];
+  await customer.deleteOne();
+  await Promise.all(files.map(deletePrivateFile));
+  await logActivity(req, { action: "customer_deleted", module: "customers", recordId: String(customer._id) });
+  res.json({ success: true, message: "Customer deleted." });
 });

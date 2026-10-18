@@ -26,6 +26,9 @@ export interface ICar {
   weeklyPrice?: number;
   monthlyPrice?: number;
   securityDeposit?: number;
+  /** Charged per km driven beyond the included allowance. */
+  extraKmRate?: number;
+  registrationNumber?: string;
 
   homeDelivery: {
     available: boolean;
@@ -86,6 +89,8 @@ const carSchema = new Schema<ICar>(
     weeklyPrice: { type: Number, min: 0 },
     monthlyPrice: { type: Number, min: 0 },
     securityDeposit: { type: Number, min: 0, default: 0 },
+    extraKmRate: { type: Number, min: 0, default: 0 },
+    registrationNumber: { type: String, trim: true, uppercase: true },
 
     homeDelivery: {
       available: { type: Boolean, default: false },

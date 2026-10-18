@@ -4,6 +4,8 @@ import { ApiError } from "../utils/ApiError";
 import { Car } from "../models/Car";
 import { Location } from "../models/Location";
 import { Booking } from "../models/Booking";
+import { Setting } from "../models/Setting";
+import { DEFAULT_KM_PER_DAY } from "../services/priceCalculator.service";
 import { CarStatus, ACTIVE_BOOKING_STATUSES } from "../types/enums";
 import { isCarAvailable, combineDateAndTime } from "../services/availability.service";
 import { serializeCarSummary, serializeCarDetail } from "../utils/serializers";
@@ -93,7 +95,8 @@ export const getCarBySlug = asyncHandler(async (req: Request, res: Response) => 
     "city region slug"
   );
   if (!car) throw new ApiError(404, "Car not found.");
-  res.json({ success: true, data: serializeCarDetail(car) });
+  const settings = await Setting.findOne({ key: "GLOBAL" }).select("booking.kmPerDay").lean();
+  res.json({ success: true, data: { ...serializeCarDetail(car), kmPerDay: settings?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY } });
 });
 
 export const checkCarAvailability = asyncHandler(async (req: Request, res: Response) => {

@@ -13,6 +13,8 @@ export interface ISetting extends Document {
     minRentalHours: number;
     maxRentalDays: number;
     taxPercent: number;
+    /** Kilometres included per completed 24 hours of rental. */
+    kmPerDay: number;
     cancellationRulesText?: string;
   };
   seo: { defaultSeoTitle?: string; defaultDescription?: string; defaultOgImage?: string };
@@ -33,6 +35,7 @@ const settingSchema = new Schema<ISetting>(
       minRentalHours: { type: Number, default: 4 },
       maxRentalDays: { type: Number, default: 30 },
       taxPercent: { type: Number, default: 0 },
+      kmPerDay: { type: Number, default: 300, min: 0 },
       cancellationRulesText: { type: String },
     },
     seo: {

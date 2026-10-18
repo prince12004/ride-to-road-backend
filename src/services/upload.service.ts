@@ -133,3 +133,17 @@ export function viewableDocumentUrl(doc: { url: string; publicId: string }): str
 export async function deleteFromCloudinary(publicId: string): Promise<void> {
   await cloudinary.uploader.destroy(publicId);
 }
+
+/** Removes a file uploaded with uploadPrivateFile. Best effort: a failure is only logged. */
+export async function deletePrivateFile(publicId: string): Promise<void> {
+  if (!publicId || !isCloudinaryConfigured()) return;
+  try {
+    await cloudinary.uploader.destroy(publicId, {
+      type: "authenticated",
+      resource_type: publicId.endsWith(".pdf") ? "raw" : "image",
+      invalidate: true,
+    });
+  } catch (error) {
+    console.error("[upload] Could not delete private file:", publicId, error);
+  }
+}

@@ -7,12 +7,44 @@ import { BlogCategory } from "../../models/BlogCategory";
 import { Faq } from "../../models/Faq";
 import { Testimonial } from "../../models/Testimonial";
 import { Journey } from "../../models/Journey";
+import { Booking } from "../../models/Booking";
+import { Car } from "../../models/Car";
+import { Blog } from "../../models/Blog";
 import { createCrudController } from "../../utils/crudFactory";
 
-export const locationController = createCrudController(Location, { moduleName: "location", searchFields: ["city", "region"] });
-export const couponController = createCrudController(Coupon, { moduleName: "coupon", searchFields: ["code", "description"], populate: "applicableCars" });
+// Bookings are counted including soft-deleted ones: they are still financial records.
+const bookingsUsing = (filter: Record<string, unknown>) => Booking.countDocuments(filter).setOptions({ includeDeleted: true });
+
+export const locationController = createCrudController(Location, {
+  moduleName: "location",
+  searchFields: ["city", "region"],
+  beforeRemove: async (id) => {
+    const [cars, bookings] = await Promise.all([
+      Car.countDocuments({ $or: [{ location: id }, { cities: id }] }),
+      bookingsUsing({ $or: [{ pickupLocation: id }, { dropLocation: id }] }),
+    ]);
+    if (cars) return `${cars} car(s) are listed in this location. Move them to another location first, or mark the location inactive.`;
+    if (bookings) return `${bookings} booking(s) use this location, so it can't be deleted. Mark it inactive instead.`;
+  },
+});
+export const couponController = createCrudController(Coupon, {
+  moduleName: "coupon",
+  searchFields: ["code", "description"],
+  populate: "applicableCars",
+  beforeRemove: async (id) => {
+    const bookings = await bookingsUsing({ coupon: id });
+    if (bookings) return `This coupon was used on ${bookings} booking(s), so it can't be deleted. Mark it inactive instead.`;
+  },
+});
 export const offerController = createCrudController(Offer, { moduleName: "offer", searchFields: ["title", "description"] });
-export const blogCategoryController = createCrudController(BlogCategory, { moduleName: "blogCategory", searchFields: ["name"] });
+export const blogCategoryController = createCrudController(BlogCategory, {
+  moduleName: "blogCategory",
+  searchFields: ["name"],
+  beforeRemove: async (id) => {
+    const blogs = await Blog.countDocuments({ category: id });
+    if (blogs) return `${blogs} blog post(s) are in this category. Move them to another category first.`;
+  },
+});
 export const faqController = createCrudController(Faq, { moduleName: "faq", searchFields: ["question", "answer"], defaultSort: "order" });
 export const testimonialController = createCrudController(Testimonial, { moduleName: "testimonial", searchFields: ["name", "location"] });
 export const journeyController = createCrudController(Journey, { moduleName: "journey", searchFields: ["from", "to"] });

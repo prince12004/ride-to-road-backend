@@ -34,6 +34,11 @@ export const adminUpdateUser = asyncHandler(async (req: Request, res: Response) 
 
 export const adminDeleteUser = asyncHandler(async (req: Request, res: Response) => {
   if (req.params.id === req.admin!.id) throw new ApiError(400, "You cannot delete your own account.");
+  const target = await AdminUser.findById(req.params.id);
+  if (!target) throw new ApiError(404, "Admin not found.");
+  if (target.role === "SUPER_ADMIN" && (await AdminUser.countDocuments({ role: "SUPER_ADMIN" })) <= 1) {
+    throw new ApiError(400, "This is the only Super Admin and can't be deleted.");
+  }
   const admin = await AdminUser.findByIdAndDelete(req.params.id);
   if (!admin) throw new ApiError(404, "Admin not found.");
   await logActivity(req, { action: "admin_user_deleted", module: "users", recordId: String(admin._id) });

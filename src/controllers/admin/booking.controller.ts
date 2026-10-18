@@ -10,7 +10,11 @@ import { BookingStatus, PaymentStatus, PaymentMethod, BookingSource, ACTIVE_BOOK
 import { logActivity } from "../../services/activityLog.service";
 import { isCarAvailable, combineDateAndTime } from "../../services/availability.service";
 import { generateBookingId } from "../../utils/bookingId";
-import { calculateBaseAmount, calculateDurationHours, effectiveDailyRate, snapshotRates, MIN_RENTAL_HOURS, type RateCard } from "../../services/priceCalculator.service";
+import { calculateBaseAmount, calculateDurationHours, effectiveDailyRate, snapshotRates, MIN_RENTAL_HOURS, DEFAULT_KM_PER_DAY, includedKm, extraKmCharge, type RateCard } from "../../services/priceCalculator.service";
+import { Setting } from "../../models/Setting";
+import { User, type IUser } from "../../models/User";
+import { viewableDocumentUrl } from "../../services/upload.service";
+import { bookingSummary } from "../../services/bookingSummary.service";
 import { amountReceived, balanceDue, syncPaymentStatus } from "../../services/payment.service";
 import { recordCouponUsage } from "../../services/coupon.service";
 
@@ -79,20 +83,254 @@ export const adminListPendingPayments = asyncHandler(async (req: Request, res: R
   });
 });
 
+/**
+ * The customer's profile and KYC documents for a booking: the linked account,
+ * or — for offline bookings made without one — the account registered with
+ * the same mobile number (mobile is the login identity, so it is unique).
+ */
+async function customerForBooking(booking: IBooking) {
+  const fields = "name email mobile address city state pincode profileImage verification";
+  let matchedBy: "account" | "mobile" | null = null;
+  let user = booking.user ? await User.findById(booking.user).select<IUser>(fields) : null;
+  if (user) matchedBy = "account";
+  else {
+    user = await User.findOne({ mobile: booking.mobile }).select<IUser>(fields);
+    if (user) matchedBy = "mobile";
+  }
+  if (!user) return null;
+  return {
+    matchedBy,
+    _id: String(user._id),
+    name: user.name,
+    email: user.email,
+    mobile: user.mobile,
+    address: user.address,
+    city: user.city,
+    state: user.state,
+    pincode: user.pincode,
+    profileImage: user.profileImage?.url ? { url: user.profileImage.url } : undefined,
+    verificationStatus: user.verification?.status,
+    documents: (user.verification?.documents ?? []).map((d) => ({
+      type: d.type,
+      url: viewableDocumentUrl(d),
+      isPdf: d.publicId?.endsWith(".pdf") ?? false,
+    })),
+  };
+}
+
 export const adminGetBooking = asyncHandler(async (req: Request, res: Response) => {
   const booking = await Booking.findById(req.params.id)
     .populate("car")
     .populate("pickupLocation")
     .populate("dropLocation")
     .populate("user", "name email mobile")
-    .populate("coupon", "code");
+    .populate("coupon", "code")
+    .populate("payment.collections.recordedBy", "name")
+    .populate("closure.closedBy", "name");
   if (!booking) throw new ApiError(404, "Booking not found.");
 
-  const history = await BookingStatusHistory.find({ booking: booking._id })
-    .populate("changedByAdmin", "name")
-    .sort("createdAt");
+  const [history, summary, customer] = await Promise.all([
+    BookingStatusHistory.find({ booking: booking._id }).populate("changedByAdmin", "name").sort("createdAt"),
+    bookingSummary(booking),
+    customerForBooking(booking),
+  ]);
 
-  res.json({ success: true, data: { booking, history } });
+  res.json({ success: true, data: { booking, history, summary, customer } });
+});
+
+const TERMINAL_STATUSES = [BookingStatus.COMPLETED, BookingStatus.CANCELLED];
+
+// Edits customer / trip details. A schedule change re-prices the rental from
+// the booking's own rates (not the car's current price) and re-checks
+// availability; every change is written to the booking history.
+export const adminEditBooking = asyncHandler(async (req: Request, res: Response) => {
+  const body = req.body as {
+    customerName?: string;
+    mobile?: string;
+    email?: string;
+    address?: string;
+    specialRequest?: string;
+    pickupLocationId?: string;
+    deliveryAddress?: string;
+    pickupDate?: string;
+    pickupTime?: string;
+    dropDate?: string;
+    dropTime?: string;
+  };
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) throw new ApiError(404, "Booking not found.");
+  if (TERMINAL_STATUSES.includes(booking.status)) throw new ApiError(400, "Completed or cancelled bookings can't be edited.");
+
+  const changes: string[] = [];
+  const setText = (key: "customerName" | "mobile" | "email" | "address" | "specialRequest", label: string) => {
+    const v = body[key];
+    if (v === undefined) return;
+    const next = v.trim() || undefined;
+    if ((booking[key] ?? undefined) !== next) {
+      changes.push(`${label}: ${booking[key] ?? "—"} → ${next ?? "—"}`);
+      (booking as unknown as Record<string, unknown>)[key] = next;
+    }
+  };
+  setText("customerName", "Name");
+  setText("mobile", "Mobile");
+  setText("email", "Email");
+  setText("address", "Address");
+  setText("specialRequest", "Special request");
+
+  if (body.pickupLocationId && body.pickupLocationId !== String(booking.pickupLocation)) {
+    const loc = await Location.findById(body.pickupLocationId);
+    if (!loc) throw new ApiError(404, "Selected location was not found.");
+    booking.pickupLocation = loc._id;
+    booking.dropLocation = loc._id;
+    changes.push(`Pickup location → ${loc.city}`);
+  }
+  if (body.deliveryAddress !== undefined && booking.homeDelivery?.requested) {
+    const addr = body.deliveryAddress.trim();
+    if (addr.length < 10) throw new ApiError(400, "Enter the complete delivery address.");
+    if (addr !== booking.homeDelivery.address) {
+      booking.homeDelivery.address = addr;
+      changes.push("Delivery address updated");
+    }
+  }
+
+  const scheduleGiven = body.pickupDate && body.pickupTime && body.dropDate && body.dropTime;
+  if (scheduleGiven) {
+    const pickupAt = combineDateAndTime(body.pickupDate!, body.pickupTime!);
+    const dropAt = combineDateAndTime(body.dropDate!, body.dropTime!);
+    if (Number.isNaN(pickupAt.getTime()) || Number.isNaN(dropAt.getTime())) throw new ApiError(400, "Invalid date/time.");
+    if (pickupAt.getTime() !== booking.pickupAt.getTime() || dropAt.getTime() !== booking.dropAt.getTime()) {
+      if (dropAt.getTime() - pickupAt.getTime() < MIN_RENTAL_HOURS * 60 * 60 * 1000) {
+        throw new ApiError(400, `Minimum rental duration is ${MIN_RENTAL_HOURS} hours.`);
+      }
+      const available = await isCarAvailable({ carId: booking.car, pickupAt, dropAt, excludeBookingId: booking._id });
+      if (!available) throw new ApiError(409, "This car is booked by another customer in the new period.");
+
+      const rates = await ratesForBooking(booking);
+      const newHours = calculateDurationHours(pickupAt, dropAt);
+      const newBase = calculateBaseAmount(rates, newHours);
+      const delta = newBase - booking.baseAmount;
+      booking.pickupAt = pickupAt;
+      booking.pickupDate = pickupAt;
+      booking.pickupTime = body.pickupTime!;
+      booking.dropAt = dropAt;
+      booking.dropDate = dropAt;
+      booking.dropTime = body.dropTime!;
+      booking.durationHours = newHours;
+      booking.baseAmount = newBase;
+      booking.totalAmount += delta;
+      changes.push(`Schedule changed to ${newHours} hrs; rental ${delta >= 0 ? "+" : "−"}₹${Math.abs(delta)}`);
+    }
+  }
+
+  if (!changes.length) return res.json({ success: true, data: booking, message: "Nothing changed." });
+  syncPaymentStatus(booking);
+  await booking.save();
+  await BookingStatusHistory.create({
+    booking: booking._id,
+    status: booking.status,
+    note: `Booking edited — ${changes.join("; ")}.`,
+    changedByAdmin: req.admin!.id,
+  });
+  await logActivity(req, { action: "booking_edited", module: "bookings", recordId: String(booking._id), meta: { changes } });
+  res.json({ success: true, data: booking });
+});
+
+// Closes (completes) a booking when the car comes back: records odometer /
+// km driven, charges extra km at the booking's own rate, optional other
+// charges (fuel, damage…), and the closure date.
+export const adminCloseBooking = asyncHandler(async (req: Request, res: Response) => {
+  const { closedAt, odometerStart, odometerEnd, kmDriven, otherCharges = 0, otherChargesNote, notes } = req.body as {
+    closedAt?: string;
+    odometerStart?: number;
+    odometerEnd?: number;
+    kmDriven?: number;
+    otherCharges?: number;
+    otherChargesNote?: string;
+    notes?: string;
+  };
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) throw new ApiError(404, "Booking not found.");
+  if (!ACTIVE_BOOKING_STATUSES.includes(booking.status)) {
+    throw new ApiError(400, "Only confirmed, car-assigned or active bookings can be closed.");
+  }
+
+  let driven = kmDriven;
+  if (odometerStart !== undefined && odometerEnd !== undefined) {
+    if (odometerEnd < odometerStart) throw new ApiError(400, "End odometer reading can't be less than the start reading.");
+    driven = odometerEnd - odometerStart;
+  }
+  if (driven === undefined) throw new ApiError(400, "Enter the km driven or both odometer readings.");
+
+  const when = closedAt ? new Date(closedAt) : new Date();
+  if (Number.isNaN(when.getTime())) throw new ApiError(400, "Invalid closure date/time.");
+
+  const summary = await bookingSummary(booking);
+  const { extraKm, charge } = extraKmCharge(driven, summary.includedKm, summary.extraKmRate);
+
+  booking.closure = {
+    closedAt: when,
+    odometerStart,
+    odometerEnd,
+    kmDriven: Math.round(driven),
+    includedKm: summary.includedKm,
+    extraKm,
+    extraKmCharge: charge,
+    otherCharges,
+    otherChargesNote: otherChargesNote?.trim() || undefined,
+    notes: notes?.trim() || undefined,
+    closedBy: new Types.ObjectId(req.admin!.id),
+  };
+  booking.kmPolicy = { kmPerDay: summary.kmPerDay, extraKmRate: summary.extraKmRate };
+  booking.additionalCharges = (booking.additionalCharges ?? 0) + charge + otherCharges;
+  booking.totalAmount += charge + otherCharges;
+  booking.status = BookingStatus.COMPLETED;
+  syncPaymentStatus(booking);
+  await booking.save();
+
+  const inrS = (n: number) => `₹${n.toLocaleString("en-IN")}`;
+  await BookingStatusHistory.create({
+    booking: booking._id,
+    status: BookingStatus.COMPLETED,
+    note:
+      `Booking closed. ${Math.round(driven)} km driven (${summary.includedKm} km included)` +
+      (extraKm > 0 ? `, ${extraKm} extra km × ${inrS(summary.extraKmRate)} = ${inrS(charge)}` : "") +
+      (otherCharges > 0 ? `; other charges ${inrS(otherCharges)}${otherChargesNote ? ` (${otherChargesNote})` : ""}` : "") +
+      `. Balance due ${inrS(balanceDue(booking))}.` +
+      (notes ? ` — ${notes}` : ""),
+    changedByAdmin: req.admin!.id,
+  });
+  await logActivity(req, { action: "booking_closed", module: "bookings", recordId: String(booking._id), meta: { driven, extraKm, charge, otherCharges } });
+  res.json({ success: true, data: booking });
+});
+
+// Soft delete: the booking disappears from the admin panel and the customer's
+// account, but the record (payments, history) stays in the database. An
+// active booking is cancelled first so the car is freed.
+export const adminDeleteBooking = asyncHandler(async (req: Request, res: Response) => {
+  if (!["SUPER_ADMIN", "ADMIN"].includes(req.admin!.role)) {
+    throw new ApiError(403, "Only an Admin or Super Admin can delete bookings.");
+  }
+  const { reason } = (req.body ?? {}) as { reason?: string };
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) throw new ApiError(404, "Booking not found.");
+
+  const wasStatus = booking.status;
+  if (ACTIVE_BOOKING_STATUSES.includes(booking.status) || booking.status === BookingStatus.PAYMENT_PENDING) {
+    booking.status = BookingStatus.CANCELLED;
+  }
+  booking.deletedAt = new Date();
+  booking.deletedBy = new Types.ObjectId(req.admin!.id);
+  booking.deleteReason = reason?.trim() || undefined;
+  await booking.save();
+
+  await BookingStatusHistory.create({
+    booking: booking._id,
+    status: booking.status,
+    note: `Booking deleted by admin (was ${wasStatus}).${reason ? ` Reason: ${reason}` : ""} Payment records kept.`,
+    changedByAdmin: req.admin!.id,
+  });
+  await logActivity(req, { action: "booking_deleted", module: "bookings", recordId: String(booking._id), meta: { wasStatus, reason } });
+  res.json({ success: true, message: "Booking deleted." });
 });
 
 export const adminUpdateBookingStatus = asyncHandler(async (req: Request, res: Response) => {
@@ -249,10 +487,13 @@ const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
 // Records money received against a booking — cash, online (UPI etc.) or both
 // in one go. Status follows the running total: Partially Paid until the
 // booking total is covered, then Fully Paid.
+const ONLINE_METHOD_LABELS = { UPI: "UPI", BANK_TRANSFER: "bank transfer", CARD: "card", OTHER: "online" } as const;
+
 export const adminCollectPayment = asyncHandler(async (req: Request, res: Response) => {
-  const { cashAmount = 0, onlineAmount = 0, reference, receivedAt, note } = req.body as {
+  const { cashAmount = 0, onlineAmount = 0, onlineMethod = "UPI", reference, receivedAt, note } = req.body as {
     cashAmount?: number;
     onlineAmount?: number;
+    onlineMethod?: "UPI" | "BANK_TRANSFER" | "CARD" | "OTHER";
     reference?: string;
     receivedAt?: string;
     note?: string;
@@ -277,7 +518,7 @@ export const adminCollectPayment = asyncHandler(async (req: Request, res: Respon
   const entries: IPaymentCollection[] = [];
   if (cashAmount > 0) entries.push({ mode: "CASH", amount: cashAmount, receivedAt: when, note, recordedBy: adminId, createdAt: new Date() });
   if (onlineAmount > 0) {
-    entries.push({ mode: "ONLINE", amount: onlineAmount, reference: reference?.trim(), receivedAt: when, note, recordedBy: adminId, createdAt: new Date() });
+    entries.push({ mode: "ONLINE", method: onlineMethod, amount: onlineAmount, reference: reference?.trim(), receivedAt: when, note, recordedBy: adminId, createdAt: new Date() });
   }
 
   const before = amountReceived(booking);
@@ -290,7 +531,7 @@ export const adminCollectPayment = asyncHandler(async (req: Request, res: Respon
   await booking.save();
   if (booking.payment.status === PaymentStatus.PAID) await recordCouponUsage(booking);
 
-  const parts = [cashAmount > 0 && `${inr(cashAmount)} cash`, onlineAmount > 0 && `${inr(onlineAmount)} online (UTR ${reference?.trim()})`].filter(Boolean);
+  const parts = [cashAmount > 0 && `${inr(cashAmount)} cash`, onlineAmount > 0 && `${inr(onlineAmount)} ${ONLINE_METHOD_LABELS[onlineMethod]} (UTR ${reference?.trim()})`].filter(Boolean);
   await BookingStatusHistory.create({
     booking: booking._id,
     status: booking.status,
@@ -305,7 +546,7 @@ export const adminCollectPayment = asyncHandler(async (req: Request, res: Respon
     action: "booking_payment_collected",
     module: "bookings",
     recordId: String(booking._id),
-    meta: { cashAmount, onlineAmount, reference, status: booking.payment.status },
+    meta: { cashAmount, onlineAmount, onlineMethod, reference, status: booking.payment.status },
   });
 
   res.json({ success: true, data: booking });
@@ -449,6 +690,10 @@ export const adminCreateOfflineBooking = asyncHandler(async (req: Request, res: 
     baseAmount: totalAmount,
     totalAmount,
     rates: snapshotRates(car),
+    kmPolicy: {
+      kmPerDay: (await Setting.findOne({ key: "GLOBAL" }).lean())?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY,
+      extraKmRate: car.extraKmRate ?? 0,
+    },
     status: BookingStatus.CONFIRMED,
     source: BookingSource.ADMIN_OFFLINE,
     adminNotes,

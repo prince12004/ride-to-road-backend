@@ -9,9 +9,32 @@ export interface IBookingRates {
   monthlyPrice?: number;
 }
 
+/** Kilometre policy agreed at booking time. */
+export interface IBookingKmPolicy {
+  kmPerDay: number;
+  extraKmRate: number;
+}
+
+/** Recorded when the car comes back and the booking is closed. */
+export interface IBookingClosure {
+  closedAt: Date;
+  odometerStart?: number;
+  odometerEnd?: number;
+  kmDriven: number;
+  includedKm: number;
+  extraKm: number;
+  extraKmCharge: number;
+  otherCharges: number;
+  otherChargesNote?: string;
+  notes?: string;
+  closedBy?: Types.ObjectId;
+}
+
 /** One payment received against the booking (a COD booking may be paid in parts). */
 export interface IPaymentCollection {
   mode: "CASH" | "ONLINE";
+  /** For online payments: UPI, bank transfer, card… */
+  method?: "UPI" | "BANK_TRANSFER" | "CARD" | "OTHER";
   amount: number;
   /** UTR / transaction id — required for online payments. */
   reference?: string;
@@ -62,6 +85,12 @@ export interface IBooking extends Document {
   securityDeposit: number;
   totalAmount: number;
   rates?: IBookingRates;
+  kmPolicy?: IBookingKmPolicy;
+  closure?: IBookingClosure;
+  /** Soft delete: hidden from lists, financial records kept. */
+  deletedAt?: Date;
+  deletedBy?: Types.ObjectId;
+  deleteReason?: string;
   extensionCharges: number;
   extensions: IBookingExtension[];
 
@@ -127,6 +156,26 @@ const bookingSchema = new Schema<IBooking>(
     discountAmount: { type: Number, default: 0 },
     // Refundable deposit, already included in totalAmount.
     securityDeposit: { type: Number, default: 0 },
+    kmPolicy: {
+      kmPerDay: { type: Number },
+      extraKmRate: { type: Number },
+    },
+    closure: {
+      closedAt: { type: Date },
+      odometerStart: { type: Number },
+      odometerEnd: { type: Number },
+      kmDriven: { type: Number },
+      includedKm: { type: Number },
+      extraKm: { type: Number },
+      extraKmCharge: { type: Number },
+      otherCharges: { type: Number },
+      otherChargesNote: { type: String },
+      notes: { type: String },
+      closedBy: { type: Schema.Types.ObjectId, ref: "AdminUser" },
+    },
+    deletedAt: { type: Date },
+    deletedBy: { type: Schema.Types.ObjectId, ref: "AdminUser" },
+    deleteReason: { type: String },
     rates: {
       pricePerHour: { type: Number },
       pricePerDay: { type: Number },
@@ -168,6 +217,7 @@ const bookingSchema = new Schema<IBooking>(
       collections: [
         {
           mode: { type: String, enum: ["CASH", "ONLINE"], required: true },
+          method: { type: String, enum: ["UPI", "BANK_TRANSFER", "CARD", "OTHER"] },
           amount: { type: Number, required: true, min: 0 },
           reference: { type: String, trim: true },
           receivedAt: { type: Date, required: true },
@@ -201,5 +251,18 @@ bookingSchema.index({ "payment.status": 1 });
 bookingSchema.index({ user: 1 });
 bookingSchema.index({ mobile: 1 });
 bookingSchema.index({ "payment.razorpayOrderId": 1 });
+
+// Soft-deleted bookings disappear from every query and aggregate unless the
+// caller opts in with `{ includeDeleted: true }` (query option or aggregate
+// option). Their payments and history stay in the database.
+const NOT_DELETED = { deletedAt: { $exists: false } };
+for (const op of ["find", "findOne", "countDocuments", "findOneAndUpdate", "updateMany", "updateOne"] as const) {
+  bookingSchema.pre(op, function () {
+    if (!this.getOptions().includeDeleted) this.where(NOT_DELETED);
+  });
+}
+bookingSchema.pre("aggregate", function () {
+  if (!(this.options as { includeDeleted?: boolean }).includeDeleted) this.pipeline().unshift({ $match: NOT_DELETED });
+});
 
 export const Booking = model<IBooking>("Booking", bookingSchema);

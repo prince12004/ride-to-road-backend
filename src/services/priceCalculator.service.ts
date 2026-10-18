@@ -105,3 +105,19 @@ export function buildPriceBreakdown({
 
   return { durationHours, baseAmount, additionalCharges, taxAmount, discountAmount, securityDeposit, totalAmount };
 }
+
+/** Default kilometres included per completed 24 hours (Settings.booking.kmPerDay overrides). */
+export const DEFAULT_KM_PER_DAY = 300;
+
+/**
+ * Included distance for a rental: the allowance for each *completed* 24-hour
+ * period (a booking is always at least one).
+ */
+export function includedKm(durationHours: number, kmPerDay: number): number {
+  return Math.max(1, Math.floor(durationHours / 24)) * kmPerDay;
+}
+
+export function extraKmCharge(kmDriven: number, included: number, ratePerKm: number) {
+  const extraKm = Math.max(0, Math.round(kmDriven) - included);
+  return { extraKm, charge: Math.round(extraKm * ratePerKm) };
+}

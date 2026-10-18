@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { Model } from "mongoose";
+import { Model, isValidObjectId } from "mongoose";
 import { asyncHandler } from "./asyncHandler";
 import { ApiError } from "./ApiError";
 import { logActivity } from "../services/activityLog.service";
@@ -9,6 +9,8 @@ interface CrudOptions {
   searchFields?: string[];
   populate?: string | string[];
   defaultSort?: string;
+  /** Returns a reason when the record is still in use and must not be deleted. */
+  beforeRemove?: (id: string) => Promise<string | undefined>;
 }
 
 /** Generic CRUD handlers for simple admin-managed reference/content models. */
@@ -60,6 +62,9 @@ export function createCrudController<T>(model: Model<T>, options: CrudOptions) {
   });
 
   const remove = asyncHandler(async (req: Request, res: Response) => {
+    if (!isValidObjectId(req.params.id)) throw new ApiError(404, `${options.moduleName} not found.`);
+    const blocked = await options.beforeRemove?.(req.params.id);
+    if (blocked) throw new ApiError(409, blocked);
     const item = await model.findByIdAndDelete(req.params.id);
     if (!item) throw new ApiError(404, `${options.moduleName} not found.`);
     await logActivity(req, { action: `${options.moduleName}_deleted`, module: options.moduleName, recordId: String(item._id) });

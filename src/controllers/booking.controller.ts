@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { bookingSummary } from "../services/bookingSummary.service";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ApiError } from "../utils/ApiError";
 import { Car } from "../models/Car";
@@ -8,7 +9,7 @@ import { BookingStatusHistory } from "../models/BookingStatusHistory";
 import { Setting } from "../models/Setting";
 import { CarStatus, BookingStatus, PaymentStatus, PaymentMethod, BookingSource } from "../types/enums";
 import { combineDateAndTime, isCarAvailable, isCarOfferedIn } from "../services/availability.service";
-import { buildPriceBreakdown, snapshotRates, MIN_RENTAL_HOURS } from "../services/priceCalculator.service";
+import { buildPriceBreakdown, snapshotRates, MIN_RENTAL_HOURS, DEFAULT_KM_PER_DAY } from "../services/priceCalculator.service";
 import { validateCouponForBooking, recordCouponUsage } from "../services/coupon.service";
 import { generateBookingId } from "../utils/bookingId";
 import { verifyRazorpaySignature } from "../services/razorpay.service";
@@ -117,6 +118,7 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
     securityDeposit: pricing.securityDeposit,
     totalAmount: pricing.totalAmount,
     rates: snapshotRates(car),
+    kmPolicy: { kmPerDay: settings?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY, extraKmRate: car.extraKmRate ?? 0 },
     termsAcceptedAt: new Date(),
     homeDelivery: { requested: deliveryRequested, fee: deliveryFee, address: deliveryRequested ? deliveryAddr : undefined },
     specialRequest,
@@ -251,8 +253,16 @@ export const getBookingByBookingId = asyncHandler(async (req: Request, res: Resp
   if (data.homeDelivery?.address) {
     data.homeDelivery.address = maskAddress(data.homeDelivery.address);
   }
+  // Admin-side payment entries (who recorded them, internal notes) stay private.
+  if (data.payment?.collections) {
+    data.payment.collections = data.payment.collections.map(({ mode, method, amount, receivedAt }) => ({ mode, method, amount, receivedAt })) as typeof data.payment.collections;
+  }
+  if (data.closure) {
+    delete data.closure.notes;
+    delete data.closure.closedBy;
+  }
 
-  res.json({ success: true, data: { booking: data, history } });
+  res.json({ success: true, data: { booking: data, history, summary: await bookingSummary(booking) } });
 });
 
 export const listMyBookings = asyncHandler(async (req: Request, res: Response) => {
@@ -276,5 +286,5 @@ export const getMyBookingById = asyncHandler(async (req: Request, res: Response)
   if (!booking) throw new ApiError(404, "Booking not found.");
 
   const history = await BookingStatusHistory.find({ booking: booking._id }).sort("createdAt");
-  res.json({ success: true, data: { booking, history } });
+  res.json({ success: true, data: { booking, history, summary: await bookingSummary(booking) } });
 });
