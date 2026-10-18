@@ -18,9 +18,11 @@ export const adminGetDashboardStats = asyncHandler(async (_req: Request, res: Re
     Booking.countDocuments({ status: BookingStatus.COMPLETED }),
     Booking.countDocuments({ status: BookingStatus.CANCELLED }),
     User.countDocuments(),
+    // Money actually received: part payments count too. Older paid bookings
+    // have no amountReceived, so their total stands in for it.
     Booking.aggregate([
-      { $match: { "payment.status": PaymentStatus.PAID } },
-      { $group: { _id: null, total: { $sum: "$totalAmount" } } },
+      { $match: { "payment.status": { $in: [PaymentStatus.PAID, PaymentStatus.PARTIALLY_PAID] } } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ["$payment.amountReceived", "$totalAmount"] } } } },
     ]),
     Booking.find().populate("car", "name brand").sort("-createdAt").limit(8),
     User.find().sort("-createdAt").limit(8).select("name mobile createdAt"),
@@ -33,7 +35,7 @@ export const adminGetDashboardStats = asyncHandler(async (_req: Request, res: Re
     {
       $group: {
         _id: { $dateToString: { format: "%Y-%m-%d", date: "$payment.paidAt" } },
-        total: { $sum: "$totalAmount" },
+        total: { $sum: { $ifNull: ["$payment.amountReceived", "$totalAmount"] } },
         count: { $sum: 1 },
       },
     },

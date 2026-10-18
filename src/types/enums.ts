@@ -73,6 +73,7 @@ export const ACTIVE_BOOKING_STATUSES = [
 
 export enum PaymentStatus {
   PENDING = "PENDING",
+  PARTIALLY_PAID = "PARTIALLY_PAID",
   PAID = "PAID",
   FAILED = "FAILED",
   REFUNDED = "REFUNDED",

@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { ApiError } from "../../utils/ApiError";
 import { Types } from "mongoose";
-import { Booking } from "../../models/Booking";
+import { Booking, IBooking, IPaymentCollection } from "../../models/Booking";
 import { BookingStatusHistory } from "../../models/BookingStatusHistory";
 import { Car } from "../../models/Car";
 import { Location } from "../../models/Location";
@@ -10,7 +10,8 @@ import { BookingStatus, PaymentStatus, PaymentMethod, BookingSource, ACTIVE_BOOK
 import { logActivity } from "../../services/activityLog.service";
 import { isCarAvailable, combineDateAndTime } from "../../services/availability.service";
 import { generateBookingId } from "../../utils/bookingId";
-import { calculateBaseAmount, calculateDurationHours } from "../../services/priceCalculator.service";
+import { calculateBaseAmount, calculateDurationHours, effectiveDailyRate, snapshotRates, MIN_RENTAL_HOURS, type RateCard } from "../../services/priceCalculator.service";
+import { amountReceived, balanceDue, syncPaymentStatus } from "../../services/payment.service";
 import { recordCouponUsage } from "../../services/coupon.service";
 
 export const adminListBookings = asyncHandler(async (req: Request, res: Response) => {
@@ -122,90 +123,198 @@ export const adminAddBookingNote = asyncHandler(async (req: Request, res: Respon
   res.json({ success: true, data: booking });
 });
 
-// Extends the drop date/time of a live booking (customer keeping the car
-// longer). Checks the car is free for the extra period, records the extra
-// charge and whether it was collected, and keeps an audit trail.
-export const adminExtendBooking = asyncHandler(async (req: Request, res: Response) => {
-  const { dropDate, dropTime, amount, paymentStatus, paymentMethod, note } = req.body as {
-    dropDate: string;
-    dropTime: string;
-    amount?: number;
-    paymentStatus: "PAID" | "PENDING";
-    paymentMethod?: PaymentMethod;
-    note?: string;
-  };
+/**
+ * Rates to price an extension with: the ones frozen on the booking. Bookings
+ * made before rates were stored fall back to the car's current rates, or —
+ * if the car is gone — to the daily rate the customer actually paid.
+ */
+async function ratesForBooking(booking: IBooking): Promise<RateCard> {
+  if (booking.rates?.pricePerDay) return booking.rates;
+  const car = await Car.findById(booking.car);
+  if (car) return snapshotRates(car);
+  const days = Math.max(1, Math.ceil(booking.durationHours / 24));
+  return { pricePerDay: Math.round(booking.baseAmount / days) };
+}
 
-  const booking = await Booking.findById(req.params.id);
+async function quoteExtension(booking: IBooking, newDropAt: Date) {
+  const rates = await ratesForBooking(booking);
+  const oldHours = calculateDurationHours(booking.pickupAt, booking.dropAt);
+  const newHours = calculateDurationHours(booking.pickupAt, newDropAt);
+  return {
+    rates,
+    extraHours: Math.ceil((newDropAt.getTime() - booking.dropAt.getTime()) / (1000 * 60 * 60)),
+    amount: Math.max(0, calculateBaseAmount(rates, newHours) - calculateBaseAmount(rates, oldHours)),
+    fromBookingRates: Boolean(booking.rates?.pricePerDay),
+  };
+}
+
+async function validateExtension(booking: IBooking | null, dropDate: string, dropTime: string) {
   if (!booking) throw new ApiError(404, "Booking not found.");
   if (!ACTIVE_BOOKING_STATUSES.includes(booking.status)) {
     throw new ApiError(400, "Only confirmed, car-assigned or active bookings can be extended.");
   }
-
-  const previousDropAt = booking.dropAt;
   const newDropAt = combineDateAndTime(dropDate, dropTime);
   if (Number.isNaN(newDropAt.getTime())) throw new ApiError(400, "Invalid drop date/time.");
-  if (newDropAt <= previousDropAt) throw new ApiError(400, "New drop date/time must be after the current drop time.");
+  if (newDropAt <= booking.dropAt) throw new ApiError(400, "New drop date/time must be after the current drop time.");
 
-  const available = await isCarAvailable({
-    carId: booking.car,
-    pickupAt: previousDropAt,
-    dropAt: newDropAt,
-    excludeBookingId: booking._id,
-  });
+  const available = await isCarAvailable({ carId: booking.car, pickupAt: booking.dropAt, dropAt: newDropAt, excludeBookingId: booking._id });
   if (!available) throw new ApiError(409, "This car is booked by another customer during the extended period.");
+  return newDropAt;
+}
 
-  let extensionAmount = amount;
-  if (extensionAmount === undefined) {
-    const car = await Car.findById(booking.car);
-    if (!car) throw new ApiError(404, "Car for this booking was not found.");
-    const oldHours = calculateDurationHours(booking.pickupAt, previousDropAt);
-    const newHours = calculateDurationHours(booking.pickupAt, newDropAt);
-    extensionAmount = Math.max(0, calculateBaseAmount(car, newHours) - calculateBaseAmount(car, oldHours));
-  }
+// Preview shown before the admin confirms an extension.
+export const adminQuoteExtension = asyncHandler(async (req: Request, res: Response) => {
+  const { dropDate, dropTime } = req.body as { dropDate: string; dropTime: string };
+  const booking = await Booking.findById(req.params.id);
+  const newDropAt = await validateExtension(booking, dropDate, dropTime);
+  const quote = await quoteExtension(booking!, newDropAt);
+  res.json({
+    success: true,
+    data: {
+      ...quote,
+      dailyRate: effectiveDailyRate(quote.rates),
+      newTotal: booking!.totalAmount + quote.amount,
+      balanceAfter: balanceDue(booking!) + quote.amount,
+    },
+  });
+});
 
-  const extraHours = Math.ceil((newDropAt.getTime() - previousDropAt.getTime()) / (1000 * 60 * 60));
+// Extends the drop date/time of a live booking (customer keeping the car
+// longer). Priced from the booking's original rates; the extra amount joins
+// the booking total and outstanding balance (collected via payment entries).
+export const adminExtendBooking = asyncHandler(async (req: Request, res: Response) => {
+  const { dropDate, dropTime, amount, note } = req.body as { dropDate: string; dropTime: string; amount?: number; note?: string };
 
-  booking.dropDate = newDropAt;
-  booking.dropTime = dropTime;
-  booking.dropAt = newDropAt;
-  booking.durationHours = calculateDurationHours(booking.pickupAt, newDropAt);
-  booking.extensionCharges = (booking.extensionCharges ?? 0) + extensionAmount;
-  booking.totalAmount += extensionAmount;
-  booking.extensions.push({
+  const booking = await Booking.findById(req.params.id);
+  const newDropAt = await validateExtension(booking, dropDate, dropTime);
+  const b = booking!;
+  const previousDropAt = b.dropAt;
+  const quote = await quoteExtension(b, newDropAt);
+  // An explicit amount is an admin override of the calculated charge.
+  const extensionAmount = amount ?? quote.amount;
+
+  b.dropDate = newDropAt;
+  b.dropTime = dropTime;
+  b.dropAt = newDropAt;
+  b.durationHours = calculateDurationHours(b.pickupAt, newDropAt);
+  b.extensionCharges = (b.extensionCharges ?? 0) + extensionAmount;
+  b.totalAmount += extensionAmount;
+  b.extensions.push({
     previousDropAt,
     newDropAt,
-    extraHours,
+    extraHours: quote.extraHours,
     amount: extensionAmount,
-    paymentStatus: paymentStatus === "PAID" ? PaymentStatus.PAID : PaymentStatus.PENDING,
-    paymentMethod: paymentStatus === "PAID" ? paymentMethod : undefined,
+    paymentStatus: PaymentStatus.PENDING,
     note,
     extendedBy: new Types.ObjectId(req.admin!.id),
     createdAt: new Date(),
   });
-  await booking.save();
+  syncPaymentStatus(b);
+  await b.save();
 
   const fmt = (d: Date) => d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  const rateText = `₹${effectiveDailyRate(quote.rates)}/day${quote.rates.pricePerHour ? `, ₹${quote.rates.pricePerHour}/hr` : ""}`;
   await BookingStatusHistory.create({
-    booking: booking._id,
-    status: booking.status,
-    note: `Extended: drop ${fmt(previousDropAt)} → ${fmt(newDropAt)} (+₹${extensionAmount}, ${paymentStatus === "PAID" ? "collected" : "payment pending"})${note ? ` — ${note}` : ""}`,
+    booking: b._id,
+    status: b.status,
+    note:
+      `Extended by ${quote.extraHours} hrs: drop ${fmt(previousDropAt)} → ${fmt(newDropAt)}. ` +
+      `+₹${extensionAmount}${amount !== undefined && amount !== quote.amount ? ` (override; calculated ₹${quote.amount})` : ` at ${rateText}`}. ` +
+      `Balance due ₹${balanceDue(b)}.` +
+      (note ? ` — ${note}` : ""),
     changedByAdmin: req.admin!.id,
   });
   await logActivity(req, {
     action: "booking_extended",
     module: "bookings",
+    recordId: String(b._id),
+    meta: { previousDropAt, newDropAt, amount: extensionAmount, calculated: quote.amount },
+  });
+
+  res.json({ success: true, data: b });
+});
+
+/** Confirms a payment-pending booking once it is fully paid. */
+async function confirmIfPaid(booking: IBooking): Promise<boolean> {
+  const waiting = booking.status === BookingStatus.PAYMENT_PENDING || booking.status === BookingStatus.PAYMENT_FAILED;
+  if (!waiting || booking.payment.status !== PaymentStatus.PAID) return false;
+  const available = await isCarAvailable({ carId: booking.car, pickupAt: booking.pickupAt, dropAt: booking.dropAt, excludeBookingId: booking._id });
+  if (!available) throw new ApiError(409, "This car now has another confirmed booking for these dates. Contact the customer before confirming.");
+  booking.status = BookingStatus.CONFIRMED;
+  return true;
+}
+
+const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
+
+// Records money received against a booking — cash, online (UPI etc.) or both
+// in one go. Status follows the running total: Partially Paid until the
+// booking total is covered, then Fully Paid.
+export const adminCollectPayment = asyncHandler(async (req: Request, res: Response) => {
+  const { cashAmount = 0, onlineAmount = 0, reference, receivedAt, note } = req.body as {
+    cashAmount?: number;
+    onlineAmount?: number;
+    reference?: string;
+    receivedAt?: string;
+    note?: string;
+  };
+
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) throw new ApiError(404, "Booking not found.");
+  if (booking.status === BookingStatus.CANCELLED) throw new ApiError(400, "This booking is cancelled.");
+
+  const due = balanceDue(booking);
+  if (due <= 0) throw new ApiError(400, "This booking is already fully paid.");
+  const total = cashAmount + onlineAmount;
+  if (total > due) {
+    throw new ApiError(400, `That's ${inr(total)}, but only ${inr(due)} is due on this booking. Record at most the balance.`);
+  }
+
+  const when = receivedAt ? new Date(receivedAt) : new Date();
+  if (Number.isNaN(when.getTime())) throw new ApiError(400, "Invalid payment date/time.");
+  if (when.getTime() > Date.now() + 5 * 60 * 1000) throw new ApiError(400, "Payment date/time can't be in the future.");
+
+  const adminId = new Types.ObjectId(req.admin!.id);
+  const entries: IPaymentCollection[] = [];
+  if (cashAmount > 0) entries.push({ mode: "CASH", amount: cashAmount, receivedAt: when, note, recordedBy: adminId, createdAt: new Date() });
+  if (onlineAmount > 0) {
+    entries.push({ mode: "ONLINE", amount: onlineAmount, reference: reference?.trim(), receivedAt: when, note, recordedBy: adminId, createdAt: new Date() });
+  }
+
+  const before = amountReceived(booking);
+  booking.payment.collections = [...(booking.payment.collections ?? []), ...entries];
+  booking.payment.amountReceived = before + total;
+  if (!booking.payment.method) booking.payment.method = onlineAmount > 0 && cashAmount === 0 ? PaymentMethod.OFFLINE_UPI : PaymentMethod.OFFLINE_CASH;
+  booking.payment.failureReason = undefined;
+  syncPaymentStatus(booking);
+  const confirmed = await confirmIfPaid(booking);
+  await booking.save();
+  if (booking.payment.status === PaymentStatus.PAID) await recordCouponUsage(booking);
+
+  const parts = [cashAmount > 0 && `${inr(cashAmount)} cash`, onlineAmount > 0 && `${inr(onlineAmount)} online (UTR ${reference?.trim()})`].filter(Boolean);
+  await BookingStatusHistory.create({
+    booking: booking._id,
+    status: booking.status,
+    note:
+      `Payment received: ${parts.join(" + ")}. ` +
+      (booking.payment.status === PaymentStatus.PAID ? "Fully paid." : `Balance due ${inr(balanceDue(booking))}.`) +
+      (confirmed ? " Booking confirmed." : "") +
+      (note ? ` — ${note}` : ""),
+    changedByAdmin: req.admin!.id,
+  });
+  await logActivity(req, {
+    action: "booking_payment_collected",
+    module: "bookings",
     recordId: String(booking._id),
-    meta: { previousDropAt, newDropAt, amount: extensionAmount, paymentStatus },
+    meta: { cashAmount, onlineAmount, reference, status: booking.payment.status },
   });
 
   res.json({ success: true, data: booking });
 });
 
-// Manual payment review for the temporary (gateway-less) payment methods:
-// UPI QR screenshots are checked by the team; COD is marked paid once the
-// cash is collected at pickup.
+// UPI QR: the team checked the customer's screenshot — record the balance as
+// received online. (COD and part payments go through adminCollectPayment.)
 export const adminVerifyPayment = asyncHandler(async (req: Request, res: Response) => {
-  const { note } = req.body as { note?: string };
+  const { note, reference } = req.body as { note?: string; reference?: string };
   const booking = await Booking.findById(req.params.id);
   if (!booking) throw new ApiError(404, "Booking not found.");
 
@@ -219,19 +328,26 @@ export const adminVerifyPayment = asyncHandler(async (req: Request, res: Respons
     throw new ApiError(400, "The customer hasn't uploaded a payment screenshot yet.");
   }
 
-  const confirming = booking.status === BookingStatus.PAYMENT_PENDING || booking.status === BookingStatus.PAYMENT_FAILED;
-  if (confirming) {
-    const available = await isCarAvailable({ carId: booking.car, pickupAt: booking.pickupAt, dropAt: booking.dropAt, excludeBookingId: booking._id });
-    if (!available) throw new ApiError(409, "This car now has another confirmed booking for these dates. Contact the customer before confirming.");
-    booking.status = BookingStatus.CONFIRMED;
-  }
-
-  booking.payment.status = PaymentStatus.PAID;
-  booking.payment.amount = booking.totalAmount;
-  booking.payment.paidAt = new Date();
+  const due = balanceDue(booking);
+  const isUpi = method === PaymentMethod.UPI_QR;
+  booking.payment.collections = [
+    ...(booking.payment.collections ?? []),
+    {
+      mode: isUpi ? "ONLINE" : "CASH",
+      amount: due,
+      reference: isUpi ? reference?.trim() || "UPI QR — screenshot verified" : undefined,
+      receivedAt: new Date(),
+      note,
+      recordedBy: new Types.ObjectId(req.admin!.id),
+      createdAt: new Date(),
+    },
+  ];
+  booking.payment.amountReceived = amountReceived(booking) + due;
   booking.payment.failureReason = undefined;
   booking.payment.reviewNote = note;
   booking.payment.reviewedAt = new Date();
+  syncPaymentStatus(booking);
+  const confirming = await confirmIfPaid(booking);
   await booking.save();
 
   await recordCouponUsage(booking);
@@ -239,7 +355,7 @@ export const adminVerifyPayment = asyncHandler(async (req: Request, res: Respons
     booking: booking._id,
     status: booking.status,
     note:
-      (method === PaymentMethod.COD ? "Cash payment received." : "UPI payment verified.") +
+      (isUpi ? "UPI payment verified." : "Cash payment received.") +
       (confirming ? " Booking confirmed." : "") +
       (note ? ` — ${note}` : ""),
     changedByAdmin: req.admin!.id,
@@ -305,6 +421,9 @@ export const adminCreateOfflineBooking = asyncHandler(async (req: Request, res: 
   const pickupAt = combineDateAndTime(pickupDate, pickupTime);
   const dropAt = combineDateAndTime(dropDate, dropTime);
   if (dropAt <= pickupAt) throw new ApiError(400, "Drop date/time must be after pickup date/time.");
+  if (dropAt.getTime() - pickupAt.getTime() < MIN_RENTAL_HOURS * 60 * 60 * 1000) {
+    throw new ApiError(400, `Minimum rental duration is ${MIN_RENTAL_HOURS} hours.`);
+  }
 
   const available = await isCarAvailable({ carId: car._id, pickupAt, dropAt });
   if (!available) throw new ApiError(409, "This car is already booked for the selected dates.");
@@ -329,10 +448,27 @@ export const adminCreateOfflineBooking = asyncHandler(async (req: Request, res: 
     durationHours,
     baseAmount: totalAmount,
     totalAmount,
+    rates: snapshotRates(car),
     status: BookingStatus.CONFIRMED,
     source: BookingSource.ADMIN_OFFLINE,
     adminNotes,
-    payment: { status: PaymentStatus.PAID, method: paymentMethod, amount: totalAmount, paidAt: new Date() },
+    payment: {
+      status: PaymentStatus.PAID,
+      method: paymentMethod,
+      amount: totalAmount,
+      amountReceived: totalAmount,
+      paidAt: new Date(),
+      collections: [
+        {
+          mode: paymentMethod === PaymentMethod.OFFLINE_CASH ? "CASH" : "ONLINE",
+          amount: totalAmount,
+          receivedAt: new Date(),
+          note: "Recorded when the offline booking was created.",
+          recordedBy: new Types.ObjectId(req.admin!.id),
+          createdAt: new Date(),
+        },
+      ],
+    },
   });
 
   await BookingStatusHistory.create({

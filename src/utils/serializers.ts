@@ -1,6 +1,7 @@
 import { ICar } from "../models/Car";
 import { HydratedDocument } from "mongoose";
 import { ILocation } from "../models/Location";
+import { effectiveDailyRate } from "../services/priceCalculator.service";
 
 type PopulatedCar = HydratedDocument<ICar> & { location: HydratedDocument<ILocation> | unknown };
 
@@ -24,7 +25,8 @@ export function serializeCarSummary(car: PopulatedCar) {
     transmission: obj.transmission,
     fuel: obj.fuel,
     seats: obj.seats,
-    pricePerDay: obj.pricePerDay,
+    // Shown and charged the same way: hourly × 24 when an hourly price is set.
+    pricePerDay: effectiveDailyRate(obj),
     pricePerHour: obj.pricePerHour,
     image: obj.mainImage?.url,
     tag: obj.tag,
@@ -47,6 +49,8 @@ export function serializeCarDetail(car: PopulatedCar) {
     specifications: obj.specifications,
     gallery: (obj.gallery ?? []).map((g) => g.url),
     location: obj.location,
+    allCities: Boolean(obj.allCities),
+    cities: (obj.cities ?? []).map(String),
     status: obj.status,
     isFeatured: obj.isFeatured,
     seo: obj.seo,

@@ -18,6 +18,7 @@ export const listLocations = asyncHandler(async (_req: Request, res: Response) =
       city: l.city,
       region: l.region,
       image: l.image?.url,
+      showAllCars: Boolean(l.showAllCars),
     })),
   });
 });

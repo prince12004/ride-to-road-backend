@@ -29,6 +29,7 @@ export const adminListCars = asyncHandler(async (req: Request, res: Response) =>
   const [cars, total] = await Promise.all([
     Car.find(query)
       .populate("location", "city region")
+      .populate("cities", "city")
       .sort("-createdAt")
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum),
@@ -54,8 +55,27 @@ export const adminGetCar = asyncHandler(async (req: Request, res: Response) => {
   res.json({ success: true, data: car });
 });
 
+/**
+ * Pricing and city rules shared by create/update: the daily price follows
+ * the hourly price (× 24), weekly/monthly stay optional, and the base
+ * location is always one of the car's cities.
+ */
+function normalizeCarPayload(body: Record<string, any>) {
+  const payload = { ...body };
+  const hourly = Number(payload.pricePerHour);
+  if (hourly > 0) payload.pricePerDay = Math.round(hourly * 24);
+  for (const key of ["weeklyPrice", "monthlyPrice", "pricePerHour"]) {
+    if (payload[key] === "" || payload[key] === null || payload[key] === 0) payload[key] = undefined;
+  }
+  if (Array.isArray(payload.cities)) {
+    payload.cities = [...new Set(payload.cities.map(String))].filter((c) => c !== String(payload.location));
+  }
+  if (payload.allCities) payload.cities = [];
+  return payload;
+}
+
 export const adminCreateCar = asyncHandler(async (req: Request, res: Response) => {
-  const payload = { ...req.body };
+  const payload = normalizeCarPayload(req.body);
   if (!payload.slug) payload.slug = await generateUniqueSlug(payload.name);
 
   const car = await Car.create(payload);
@@ -64,7 +84,15 @@ export const adminCreateCar = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const adminUpdateCar = asyncHandler(async (req: Request, res: Response) => {
-  const car = await Car.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+  const payload = normalizeCarPayload(req.body);
+  // Clearing an optional price must actually remove it from the document.
+  const unset = Object.fromEntries(["weeklyPrice", "monthlyPrice", "pricePerHour"].filter((k) => k in req.body && payload[k] === undefined).map((k) => [k, 1]));
+  for (const k of Object.keys(unset)) delete payload[k];
+  const car = await Car.findByIdAndUpdate(
+    req.params.id,
+    { ...payload, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
+    { new: true, runValidators: true }
+  );
   if (!car) throw new ApiError(404, "Car not found.");
   await logActivity(req, { action: "car_updated", module: "cars", recordId: String(car._id) });
   res.json({ success: true, data: car });

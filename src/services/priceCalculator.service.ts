@@ -18,32 +18,50 @@ export function calculateDurationHours(pickupAt: Date, dropAt: Date): number {
   return Math.max(1, Math.ceil(ms / (1000 * 60 * 60)));
 }
 
-/** Cheapest applicable combination of monthly -> weekly -> daily pricing tiers. */
-export function calculateBaseAmount(
-  car: Pick<ICar, "pricePerDay" | "weeklyPrice" | "monthlyPrice" | "pricePerHour">,
-  durationHours: number
-): number {
-  const { pricePerDay, weeklyPrice, monthlyPrice, pricePerHour } = car;
+/** Self-drive bookings are always at least one full day. */
+export const MIN_RENTAL_HOURS = 24;
 
-  // Cars with an hourly rate are billed by the hour (short self-drive rentals),
-  // rather than rounding up to whole days.
-  if (pricePerHour) {
-    return Math.round(pricePerHour * durationHours);
-  }
+export type RateCard = Pick<ICar, "pricePerDay" | "pricePerHour" | "weeklyPrice" | "monthlyPrice">;
 
-  if (monthlyPrice && durationHours >= 30 * 24) {
-    const months = Math.floor(durationHours / (30 * 24));
-    const remaining = durationHours % (30 * 24);
-    return months * monthlyPrice + calculateBaseAmount({ pricePerDay, weeklyPrice }, remaining || 0);
-  }
-  if (weeklyPrice && durationHours >= 7 * 24) {
-    const weeks = Math.floor(durationHours / (7 * 24));
-    const remaining = durationHours % (7 * 24);
-    return weeks * weeklyPrice + calculateBaseAmount({ pricePerDay }, remaining || 0);
-  }
+/** Daily rate: hourly × 24 when an hourly price is set, else the stored daily price. */
+export function effectiveDailyRate(rates: Pick<ICar, "pricePerDay" | "pricePerHour">): number {
+  return rates.pricePerHour ? Math.round(rates.pricePerHour * 24) : rates.pricePerDay;
+}
 
-  const days = Math.max(1, Math.ceil(durationHours / 24));
-  return days * pricePerDay;
+/** The rates to freeze on a booking, so later extensions use the agreed price. */
+export function snapshotRates(car: RateCard): RateCard {
+  return {
+    pricePerHour: car.pricePerHour || undefined,
+    pricePerDay: effectiveDailyRate(car),
+    weeklyPrice: car.weeklyPrice || undefined,
+    monthlyPrice: car.monthlyPrice || undefined,
+  };
+}
+
+/**
+ * Rental for a duration: whole months at the monthly price, then whole weeks
+ * at the weekly price (both optional), then whole days at the daily rate. A
+ * leftover part-day costs hours × hourly price (never more than a day), or a
+ * full day when the car has no hourly price.
+ */
+export function calculateBaseAmount(car: RateCard, durationHours: number): number {
+  const daily = effectiveDailyRate(car);
+  let hours = Math.max(0, Math.ceil(durationHours));
+  let total = 0;
+
+  if (car.monthlyPrice && hours >= 30 * 24) {
+    total += Math.floor(hours / (30 * 24)) * car.monthlyPrice;
+    hours %= 30 * 24;
+  }
+  if (car.weeklyPrice && hours >= 7 * 24) {
+    total += Math.floor(hours / (7 * 24)) * car.weeklyPrice;
+    hours %= 7 * 24;
+  }
+  total += Math.floor(hours / 24) * daily;
+  const leftover = hours % 24;
+  if (leftover > 0) total += car.pricePerHour ? Math.min(leftover * car.pricePerHour, daily) : daily;
+
+  return Math.round(total);
 }
 
 export function calculateCouponDiscount(

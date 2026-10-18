@@ -7,8 +7,8 @@ import { Booking } from "../models/Booking";
 import { BookingStatusHistory } from "../models/BookingStatusHistory";
 import { Setting } from "../models/Setting";
 import { CarStatus, BookingStatus, PaymentStatus, PaymentMethod, BookingSource } from "../types/enums";
-import { combineDateAndTime, isCarAvailable } from "../services/availability.service";
-import { buildPriceBreakdown } from "../services/priceCalculator.service";
+import { combineDateAndTime, isCarAvailable, isCarOfferedIn } from "../services/availability.service";
+import { buildPriceBreakdown, snapshotRates, MIN_RENTAL_HOURS } from "../services/priceCalculator.service";
 import { validateCouponForBooking, recordCouponUsage } from "../services/coupon.service";
 import { generateBookingId } from "../utils/bookingId";
 import { verifyRazorpaySignature } from "../services/razorpay.service";
@@ -45,8 +45,13 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
   if (pickupAt.getTime() < Date.now() - 60 * 60 * 1000) throw new ApiError(400, "Pickup date/time cannot be in the past.");
   if (dropAt <= pickupAt) throw new ApiError(400, "Drop date/time must be after pickup date/time.");
 
+  if (!isCarOfferedIn(car, pickupLocation)) {
+    throw new ApiError(400, `${car.name} isn't available in ${pickupLocation.city}. Please choose another city or car.`);
+  }
+
   const settings = await Setting.findOne({ key: "GLOBAL" });
-  const minHours = settings?.booking?.minRentalHours ?? 4;
+  // Self-drive rentals are never shorter than a day; the admin setting can only raise this.
+  const minHours = Math.max(MIN_RENTAL_HOURS, settings?.booking?.minRentalHours ?? 0);
   const durationCheckHours = (dropAt.getTime() - pickupAt.getTime()) / (1000 * 60 * 60);
   if (durationCheckHours < minHours) throw new ApiError(400, `Minimum rental duration is ${minHours} hours.`);
 
@@ -111,6 +116,7 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
     discountAmount: pricing.discountAmount,
     securityDeposit: pricing.securityDeposit,
     totalAmount: pricing.totalAmount,
+    rates: snapshotRates(car),
     termsAcceptedAt: new Date(),
     homeDelivery: { requested: deliveryRequested, fee: deliveryFee, address: deliveryRequested ? deliveryAddr : undefined },
     specialRequest,
@@ -122,6 +128,7 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
       status: PaymentStatus.PENDING,
       method: isCod ? PaymentMethod.COD : PaymentMethod.UPI_QR,
       amount: pricing.totalAmount,
+      amountReceived: 0,
     },
   });
 

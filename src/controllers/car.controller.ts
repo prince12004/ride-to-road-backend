@@ -29,8 +29,12 @@ export const listCars = asyncHandler(async (req: Request, res: Response) => {
       // Admin chose to offer the whole fleet in this city (e.g. via delivery);
       // cars based here are still listed first below.
       cityLocationId = String(loc._id);
+    } else if (loc) {
+      // Cars based here, also offered here, or offered in every city.
+      cityLocationId = String(loc._id);
+      query.$and = [{ $or: [{ location: loc._id }, { cities: loc._id }, { allCities: true }] }];
     } else {
-      query.location = loc ? loc._id : null; // no match -> empty result set, not "ignore filter"
+      query.location = null; // unknown city -> empty result set, not "ignore filter"
     }
   }
   if (featured === "true") query.isFeatured = true;

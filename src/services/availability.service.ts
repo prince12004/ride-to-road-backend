@@ -23,6 +23,21 @@ export async function isCarAvailable({ carId, pickupAt, dropAt, excludeBookingId
   return !conflict;
 }
 
+/** Location fields needed to decide whether a car is offered there. */
+type CityRef = { _id: Types.ObjectId | string; showAllCars?: boolean };
+type CarCities = { location: Types.ObjectId | string; allCities?: boolean; cities?: (Types.ObjectId | string)[] };
+
+/**
+ * Is the car offered in this city? Yes when the car is marked "All cities",
+ * the city lists the whole fleet (Location.showAllCars), or the city is the
+ * car's base location or one of its extra cities.
+ */
+export function isCarOfferedIn(car: CarCities, city: CityRef): boolean {
+  if (car.allCities || city.showAllCars) return true;
+  const id = String(city._id);
+  return String(car.location) === id || (car.cities ?? []).some((c) => String(c) === id);
+}
+
 export function combineDateAndTime(dateStr: string, timeStr: string): Date {
   const datePart = new Date(dateStr);
   const [time, meridiem] = timeStr.trim().split(/\s+/);

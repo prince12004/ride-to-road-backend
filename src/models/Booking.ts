@@ -1,6 +1,26 @@
 import { Schema, model, Document, Types } from "mongoose";
 import { BookingStatus, PaymentStatus, PaymentMethod, BookingSource } from "../types/enums";
 
+/** Rates agreed when the booking was made — extensions are priced from these. */
+export interface IBookingRates {
+  pricePerHour?: number;
+  pricePerDay: number;
+  weeklyPrice?: number;
+  monthlyPrice?: number;
+}
+
+/** One payment received against the booking (a COD booking may be paid in parts). */
+export interface IPaymentCollection {
+  mode: "CASH" | "ONLINE";
+  amount: number;
+  /** UTR / transaction id — required for online payments. */
+  reference?: string;
+  receivedAt: Date;
+  note?: string;
+  recordedBy?: Types.ObjectId;
+  createdAt: Date;
+}
+
 /** One admin-applied extension of the drop date/time. */
 export interface IBookingExtension {
   previousDropAt: Date;
@@ -41,6 +61,7 @@ export interface IBooking extends Document {
   discountAmount: number;
   securityDeposit: number;
   totalAmount: number;
+  rates?: IBookingRates;
   extensionCharges: number;
   extensions: IBookingExtension[];
 
@@ -60,6 +81,9 @@ export interface IBooking extends Document {
     amount?: number;
     paidAt?: Date;
     failureReason?: string;
+    /** Sum of `collections`; the balance due is totalAmount - amountReceived. */
+    amountReceived?: number;
+    collections?: IPaymentCollection[];
     proof?: { url: string; publicId: string; uploadedAt: Date };
     reviewNote?: string;
     reviewedAt?: Date;
@@ -103,6 +127,12 @@ const bookingSchema = new Schema<IBooking>(
     discountAmount: { type: Number, default: 0 },
     // Refundable deposit, already included in totalAmount.
     securityDeposit: { type: Number, default: 0 },
+    rates: {
+      pricePerHour: { type: Number },
+      pricePerDay: { type: Number },
+      weeklyPrice: { type: Number },
+      monthlyPrice: { type: Number },
+    },
     totalAmount: { type: Number, required: true },
     extensionCharges: { type: Number, default: 0 },
     extensions: [
@@ -134,6 +164,18 @@ const bookingSchema = new Schema<IBooking>(
       amount: { type: Number },
       paidAt: { type: Date },
       failureReason: { type: String },
+      amountReceived: { type: Number },
+      collections: [
+        {
+          mode: { type: String, enum: ["CASH", "ONLINE"], required: true },
+          amount: { type: Number, required: true, min: 0 },
+          reference: { type: String, trim: true },
+          receivedAt: { type: Date, required: true },
+          note: { type: String },
+          recordedBy: { type: Schema.Types.ObjectId, ref: "AdminUser" },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
       // UPI QR: customer's payment screenshot, verified manually by admin.
       proof: {
         url: { type: String },

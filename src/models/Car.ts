@@ -36,7 +36,12 @@ export interface ICar {
   features: string[];
   specifications: { label: string; value: string }[];
 
+  /** Base / pickup hub. Always one of the cities the car is offered in. */
   location: Types.ObjectId;
+  /** Offered in every active city (overrides `cities`). */
+  allCities: boolean;
+  /** Extra cities the car is offered in, besides `location`. */
+  cities: Types.ObjectId[];
   mainImage: ICarImage;
   gallery: ICarImage[];
 
@@ -92,6 +97,8 @@ const carSchema = new Schema<ICar>(
     specifications: [{ label: String, value: String }],
 
     location: { type: Schema.Types.ObjectId, ref: "Location", required: true },
+    allCities: { type: Boolean, default: false },
+    cities: [{ type: Schema.Types.ObjectId, ref: "Location" }],
     mainImage: { type: carImageSchema, required: true },
     gallery: { type: [carImageSchema], default: [] },
 

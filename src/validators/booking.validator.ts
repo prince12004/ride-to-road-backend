@@ -55,25 +55,41 @@ export const offlineBookingSchema = z.object({
   adminNotes: z.string().optional(),
 });
 
-export const extendBookingSchema = z
-  .object({
-    dropDate: z.string().min(1, "New drop date is required"),
-    dropTime: z.string().min(1, "New drop time is required"),
-    // Omitted → calculated from the car's pricing for the extra duration.
-    amount: z.number().nonnegative().optional(),
-    paymentStatus: z.enum(["PAID", "PENDING"]),
-    paymentMethod: z.enum(["OFFLINE_CASH", "OFFLINE_UPI", "OFFLINE_OTHER"]).optional(),
-    note: z.string().max(1000).optional(),
-  })
-  .refine((v) => v.paymentStatus !== "PAID" || !!v.paymentMethod, {
-    message: "Select how the extension was paid",
-    path: ["paymentMethod"],
-  });
+export const extendQuoteSchema = z.object({
+  dropDate: z.string().min(1, "New drop date is required"),
+  dropTime: z.string().min(1, "New drop time is required"),
+});
+
+export const extendBookingSchema = extendQuoteSchema.extend({
+  // Omitted → calculated from the booking's original rates.
+  amount: z.number().nonnegative().optional(),
+  note: z.string().max(1000).optional(),
+});
 
 export const reviewPaymentSchema = z.object({
   note: z.string().max(500).optional(),
+  reference: z.string().trim().max(60).optional(),
 });
 
 export const rejectPaymentSchema = z.object({
   reason: z.string().min(3, "Tell the customer why the payment was rejected").max(500),
 });
+
+const money = z.number({ invalid_type_error: "Enter an amount" }).int("Use whole rupees").nonnegative().max(10_000_000);
+
+export const collectPaymentSchema = z
+  .object({
+    cashAmount: money.optional(),
+    onlineAmount: money.optional(),
+    reference: z.string().trim().max(60).optional(),
+    receivedAt: z.string().optional(),
+    note: z.string().max(500).optional(),
+  })
+  .refine((v) => (v.cashAmount ?? 0) + (v.onlineAmount ?? 0) > 0, {
+    message: "Enter the cash and/or online amount received",
+    path: ["cashAmount"],
+  })
+  .refine((v) => !(v.onlineAmount && v.onlineAmount > 0) || /^[A-Za-z0-9-]{4,60}$/.test(v.reference ?? ""), {
+    message: "Enter the UTR / transaction ID for the online payment",
+    path: ["reference"],
+  });
