@@ -71,6 +71,15 @@ export const adminUpdateCar = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const adminDeleteCar = asyncHandler(async (req: Request, res: Response) => {
+  // Deleting a car that bookings point to breaks those bookings (and the
+  // admin pages listing them). Keep the record; hide it from the site instead.
+  const bookingCount = await Booking.countDocuments({ car: req.params.id });
+  if (bookingCount > 0) {
+    throw new ApiError(
+      409,
+      `This car has ${bookingCount} booking${bookingCount === 1 ? "" : "s"} and can't be deleted. Set its status to Inactive to remove it from the website.`
+    );
+  }
   const car = await Car.findByIdAndDelete(req.params.id);
   if (!car) throw new ApiError(404, "Car not found.");
   await logActivity(req, { action: "car_deleted", module: "cars", recordId: String(car._id) });
