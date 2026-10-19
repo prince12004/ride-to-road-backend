@@ -1,7 +1,7 @@
 import { IBooking } from "../models/Booking";
 import { Setting } from "../models/Setting";
 import { Car } from "../models/Car";
-import { DEFAULT_KM_PER_DAY, effectiveDailyRate, includedKm } from "./priceCalculator.service";
+import { DEFAULT_KM_PER_DAY, effectiveDailyRate, effectiveExtraKmRate, includedKm } from "./priceCalculator.service";
 import { amountReceived, balanceDue } from "./payment.service";
 
 /**
@@ -10,14 +10,18 @@ import { amountReceived, balanceDue } from "./payment.service";
  * never disagree.
  */
 export async function bookingSummary(booking: IBooking) {
-  let kmPolicy = booking.kmPolicy?.kmPerDay != null ? booking.kmPolicy : null;
+  // Bookings made before the km policy existed, or snapshotted with no rate
+  // (0, before the ₹7 default), use the current settings / car rate.
+  let kmPolicy = booking.kmPolicy?.kmPerDay != null && booking.kmPolicy.extraKmRate > 0 ? booking.kmPolicy : null;
   if (!kmPolicy) {
-    // Bookings made before the km policy existed: current settings / car rate.
     const [settings, car] = await Promise.all([
       Setting.findOne({ key: "GLOBAL" }).select("booking").lean(),
       Car.findById((booking.car as { _id?: unknown })?._id ?? booking.car).select("extraKmRate").lean(),
     ]);
-    kmPolicy = { kmPerDay: settings?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY, extraKmRate: car?.extraKmRate ?? 0 };
+    kmPolicy = {
+      kmPerDay: booking.kmPolicy?.kmPerDay ?? settings?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY,
+      extraKmRate: effectiveExtraKmRate(car?.extraKmRate, settings?.booking?.extraKmRate),
+    };
   }
 
   const collections = booking.payment.collections ?? [];

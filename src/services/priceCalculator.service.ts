@@ -108,6 +108,12 @@ export function buildPriceBreakdown({
 
 /** Default kilometres included per completed 24 hours (Settings.booking.kmPerDay overrides). */
 export const DEFAULT_KM_PER_DAY = 300;
+export const DEFAULT_EXTRA_KM_RATE = 7;
+
+/** A car's own extra-km rate, or the site default when it has none (0/unset). */
+export function effectiveExtraKmRate(carRate: number | undefined | null, defaultRate: number | undefined | null): number {
+  return carRate && carRate > 0 ? carRate : defaultRate ?? DEFAULT_EXTRA_KM_RATE;
+}
 
 /**
  * Included distance for a rental: the allowance for each *completed* 24-hour

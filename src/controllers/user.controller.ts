@@ -147,3 +147,20 @@ export const removeProfileImage = asyncHandler(async (req: Request, res: Respons
   if (previous) await deletePrivateFile(previous);
   res.json({ success: true, message: "Profile photo removed." });
 });
+
+// The ID numbers typed next to the KYC uploads (printed on the booking form).
+// "" clears a number; formats are checked by documentNumbersSchema.
+export const updateDocumentNumbers = asyncHandler(async (req: Request, res: Response) => {
+  const { aadhaarNumber, dlNumber, panNumber } = req.body as { aadhaarNumber?: string; dlNumber?: string; panNumber?: string };
+  const user = await User.findById(req.user!.id);
+  if (!user) throw new ApiError(404, "User not found.");
+  const current = user.documentNumbers ?? {};
+  const pick = (v: string | undefined, prev?: string) => (v === undefined ? prev : v || undefined);
+  user.documentNumbers = {
+    aadhaar: pick(aadhaarNumber, current.aadhaar),
+    drivingLicence: pick(dlNumber, current.drivingLicence),
+    pan: pick(panNumber, current.pan),
+  };
+  await user.save();
+  res.json({ success: true, data: { documentNumbers: user.documentNumbers } });
+});

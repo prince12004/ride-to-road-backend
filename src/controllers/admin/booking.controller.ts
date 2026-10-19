@@ -10,7 +10,7 @@ import { BookingStatus, PaymentStatus, PaymentMethod, BookingSource, ACTIVE_BOOK
 import { logActivity } from "../../services/activityLog.service";
 import { isCarAvailable, combineDateAndTime } from "../../services/availability.service";
 import { generateBookingId } from "../../utils/bookingId";
-import { calculateBaseAmount, calculateDurationHours, effectiveDailyRate, snapshotRates, MIN_RENTAL_HOURS, DEFAULT_KM_PER_DAY, includedKm, extraKmCharge, type RateCard } from "../../services/priceCalculator.service";
+import { calculateBaseAmount, calculateDurationHours, effectiveDailyRate, snapshotRates, MIN_RENTAL_HOURS, DEFAULT_KM_PER_DAY, includedKm, extraKmCharge, effectiveExtraKmRate, type RateCard } from "../../services/priceCalculator.service";
 import { Setting } from "../../models/Setting";
 import { User, type IUser } from "../../models/User";
 import { viewableDocumentUrl } from "../../services/upload.service";
@@ -89,7 +89,7 @@ export const adminListPendingPayments = asyncHandler(async (req: Request, res: R
  * the same mobile number (mobile is the login identity, so it is unique).
  */
 async function customerForBooking(booking: IBooking) {
-  const fields = "name email mobile address city state pincode profileImage verification";
+  const fields = "name email mobile address city state pincode profileImage verification documentNumbers";
   let matchedBy: "account" | "mobile" | null = null;
   let user = booking.user ? await User.findById(booking.user).select<IUser>(fields) : null;
   if (user) matchedBy = "account";
@@ -110,6 +110,7 @@ async function customerForBooking(booking: IBooking) {
     pincode: user.pincode,
     profileImage: user.profileImage?.url ? { url: user.profileImage.url } : undefined,
     verificationStatus: user.verification?.status,
+    documentNumbers: user.documentNumbers,
     documents: (user.verification?.documents ?? []).map((d) => ({
       type: d.type,
       url: viewableDocumentUrl(d),
@@ -138,6 +139,12 @@ export const adminGetBooking = asyncHandler(async (req: Request, res: Response) 
   res.json({ success: true, data: { booking, history, summary, customer } });
 });
 
+/** Drops empty entries; undefined when nothing is left (formats are checked by the validators). */
+function cleanDocumentNumbers(n: { aadhaar?: string; drivingLicence?: string; pan?: string }) {
+  const out = Object.fromEntries(Object.entries(n).filter(([, v]) => typeof v === "string" && v.trim()).map(([k, v]) => [k, v!.trim()]));
+  return Object.keys(out).length ? (out as { aadhaar?: string; drivingLicence?: string; pan?: string }) : undefined;
+}
+
 const TERMINAL_STATUSES = [BookingStatus.COMPLETED, BookingStatus.CANCELLED];
 
 // Edits customer / trip details. A schedule change re-prices the rental from
@@ -156,13 +163,23 @@ export const adminEditBooking = asyncHandler(async (req: Request, res: Response)
     pickupTime?: string;
     dropDate?: string;
     dropTime?: string;
+    tripFrom?: string;
+    tripTo?: string;
+    aadhaarNumber?: string;
+    dlNumber?: string;
+    panNumber?: string;
   };
   const booking = await Booking.findById(req.params.id);
   if (!booking) throw new ApiError(404, "Booking not found.");
-  if (TERMINAL_STATUSES.includes(booking.status)) throw new ApiError(400, "Completed or cancelled bookings can't be edited.");
+
+  // Route and ID numbers are paperwork details — editable even after the trip.
+  const paperworkOnly = Object.keys(body).every((k) => ["tripFrom", "tripTo", "aadhaarNumber", "dlNumber", "panNumber"].includes(k));
+  if (TERMINAL_STATUSES.includes(booking.status) && !paperworkOnly) {
+    throw new ApiError(400, "Completed or cancelled bookings can't be edited (only source/destination and ID numbers).");
+  }
 
   const changes: string[] = [];
-  const setText = (key: "customerName" | "mobile" | "email" | "address" | "specialRequest", label: string) => {
+  const setText = (key: "customerName" | "mobile" | "email" | "address" | "specialRequest" | "tripFrom" | "tripTo", label: string) => {
     const v = body[key];
     if (v === undefined) return;
     const next = v.trim() || undefined;
@@ -176,6 +193,21 @@ export const adminEditBooking = asyncHandler(async (req: Request, res: Response)
   setText("email", "Email");
   setText("address", "Address");
   setText("specialRequest", "Special request");
+  setText("tripFrom", "Source");
+  setText("tripTo", "Destination");
+
+  if (body.aadhaarNumber !== undefined || body.dlNumber !== undefined || body.panNumber !== undefined) {
+    const prev = booking.documentNumbers ?? {};
+    const next = cleanDocumentNumbers({
+      aadhaar: body.aadhaarNumber ?? prev.aadhaar,
+      drivingLicence: body.dlNumber ?? prev.drivingLicence,
+      pan: body.panNumber ?? prev.pan,
+    });
+    if (JSON.stringify(next ?? {}) !== JSON.stringify({ aadhaar: prev.aadhaar, drivingLicence: prev.drivingLicence, pan: prev.pan })) {
+      booking.documentNumbers = next;
+      changes.push("ID numbers updated");
+    }
+  }
 
   if (body.pickupLocationId && body.pickupLocationId !== String(booking.pickupLocation)) {
     const loc = await Location.findById(body.pickupLocationId);
@@ -650,7 +682,9 @@ export const adminCreateOfflineBooking = asyncHandler(async (req: Request, res: 
   const {
     carId, customerName, mobile, email, pickupLocationId, dropLocationId,
     pickupDate, pickupTime, dropDate, dropTime, totalAmount, paymentMethod, adminNotes,
+    tripFrom, tripTo, aadhaarNumber, dlNumber, panNumber,
   } = req.body;
+  const settings = await Setting.findOne({ key: "GLOBAL" }).select("booking").lean();
 
   const car = await Car.findById(carId);
   if (!car) throw new ApiError(404, "Selected car was not found.");
@@ -691,9 +725,12 @@ export const adminCreateOfflineBooking = asyncHandler(async (req: Request, res: 
     totalAmount,
     rates: snapshotRates(car),
     kmPolicy: {
-      kmPerDay: (await Setting.findOne({ key: "GLOBAL" }).lean())?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY,
-      extraKmRate: car.extraKmRate ?? 0,
+      kmPerDay: settings?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY,
+      extraKmRate: effectiveExtraKmRate(car.extraKmRate, settings?.booking?.extraKmRate),
     },
+    tripFrom: tripFrom?.trim() || undefined,
+    tripTo: tripTo?.trim() || undefined,
+    documentNumbers: cleanDocumentNumbers({ aadhaar: aadhaarNumber, drivingLicence: dlNumber, pan: panNumber }),
     status: BookingStatus.CONFIRMED,
     source: BookingSource.ADMIN_OFFLINE,
     adminNotes,

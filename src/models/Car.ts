@@ -89,7 +89,8 @@ const carSchema = new Schema<ICar>(
     weeklyPrice: { type: Number, min: 0 },
     monthlyPrice: { type: Number, min: 0 },
     securityDeposit: { type: Number, min: 0, default: 0 },
-    extraKmRate: { type: Number, min: 0, default: 0 },
+    // Unset/0 → the default rate from settings (booking.extraKmRate).
+    extraKmRate: { type: Number, min: 0 },
     registrationNumber: { type: String, trim: true, uppercase: true },
 
     homeDelivery: {

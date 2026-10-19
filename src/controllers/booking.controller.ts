@@ -9,7 +9,7 @@ import { BookingStatusHistory } from "../models/BookingStatusHistory";
 import { Setting } from "../models/Setting";
 import { CarStatus, BookingStatus, PaymentStatus, PaymentMethod, BookingSource } from "../types/enums";
 import { combineDateAndTime, isCarAvailable, isCarOfferedIn } from "../services/availability.service";
-import { buildPriceBreakdown, snapshotRates, MIN_RENTAL_HOURS, DEFAULT_KM_PER_DAY } from "../services/priceCalculator.service";
+import { buildPriceBreakdown, snapshotRates, MIN_RENTAL_HOURS, DEFAULT_KM_PER_DAY, effectiveExtraKmRate } from "../services/priceCalculator.service";
 import { validateCouponForBooking, recordCouponUsage } from "../services/coupon.service";
 import { generateBookingId } from "../utils/bookingId";
 import { verifyRazorpaySignature } from "../services/razorpay.service";
@@ -118,7 +118,7 @@ export const initiateBooking = asyncHandler(async (req: Request, res: Response) 
     securityDeposit: pricing.securityDeposit,
     totalAmount: pricing.totalAmount,
     rates: snapshotRates(car),
-    kmPolicy: { kmPerDay: settings?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY, extraKmRate: car.extraKmRate ?? 0 },
+    kmPolicy: { kmPerDay: settings?.booking?.kmPerDay ?? DEFAULT_KM_PER_DAY, extraKmRate: effectiveExtraKmRate(car.extraKmRate, settings?.booking?.extraKmRate) },
     termsAcceptedAt: new Date(),
     homeDelivery: { requested: deliveryRequested, fee: deliveryFee, address: deliveryRequested ? deliveryAddr : undefined },
     specialRequest,
@@ -257,6 +257,7 @@ export const getBookingByBookingId = asyncHandler(async (req: Request, res: Resp
   if (data.payment?.collections) {
     data.payment.collections = data.payment.collections.map(({ mode, method, amount, receivedAt }) => ({ mode, method, amount, receivedAt })) as typeof data.payment.collections;
   }
+  delete (data as { documentNumbers?: unknown }).documentNumbers;
   if (data.closure) {
     delete data.closure.notes;
     delete data.closure.closedBy;

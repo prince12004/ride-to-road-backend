@@ -15,6 +15,8 @@ export interface ISetting extends Document {
     taxPercent: number;
     /** Kilometres included per completed 24 hours of rental. */
     kmPerDay: number;
+    /** ₹ per km beyond the allowance, for cars without their own rate. */
+    extraKmRate: number;
     cancellationRulesText?: string;
   };
   seo: { defaultSeoTitle?: string; defaultDescription?: string; defaultOgImage?: string };
@@ -36,6 +38,7 @@ const settingSchema = new Schema<ISetting>(
       maxRentalDays: { type: Number, default: 30 },
       taxPercent: { type: Number, default: 0 },
       kmPerDay: { type: Number, default: 300, min: 0 },
+      extraKmRate: { type: Number, default: 7, min: 0 },
       cancellationRulesText: { type: String },
     },
     seo: {

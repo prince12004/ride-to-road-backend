@@ -26,6 +26,8 @@ export interface IUser extends Document {
   otpAttempts: number;
   otpRequestedAt?: Date;
 
+  /** ID numbers the customer typed with their KYC uploads. */
+  documentNumbers?: { aadhaar?: string; drivingLicence?: string; pan?: string };
   verification: {
     status: VerificationStatus;
     documents: IVerificationDocument[];
@@ -58,6 +60,7 @@ const userSchema = new Schema<IUser>(
     otpAttempts: { type: Number, default: 0, select: false },
     otpRequestedAt: { type: Date, select: false },
 
+    documentNumbers: { aadhaar: String, drivingLicence: String, pan: String },
     verification: {
       status: { type: String, enum: Object.values(VerificationStatus), default: VerificationStatus.NOT_SUBMITTED },
       documents: [{ type: { type: String }, url: String, publicId: String }],

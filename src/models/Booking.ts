@@ -91,6 +91,11 @@ export interface IBooking extends Document {
   deletedAt?: Date;
   deletedBy?: Types.ObjectId;
   deleteReason?: string;
+  /** Trip route as told by the customer, entered by admin (printed on the form). */
+  tripFrom?: string;
+  tripTo?: string;
+  /** ID numbers entered by admin for this booking; override the customer's own. */
+  documentNumbers?: { aadhaar?: string; drivingLicence?: string; pan?: string };
   extensionCharges: number;
   extensions: IBookingExtension[];
 
@@ -176,6 +181,9 @@ const bookingSchema = new Schema<IBooking>(
     deletedAt: { type: Date },
     deletedBy: { type: Schema.Types.ObjectId, ref: "AdminUser" },
     deleteReason: { type: String },
+    tripFrom: { type: String, trim: true },
+    tripTo: { type: String, trim: true },
+    documentNumbers: { aadhaar: String, drivingLicence: String, pan: String },
     rates: {
       pricePerHour: { type: Number },
       pricePerDay: { type: Number },

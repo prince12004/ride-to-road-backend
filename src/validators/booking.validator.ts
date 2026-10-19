@@ -39,6 +39,23 @@ export const validateCouponSchema = z.object({
   mobile: z.string().optional(),
 });
 
+/** ID numbers: "" clears a number; spaces are removed and letters upper-cased. */
+const squash = (v: string) => v.replace(/[\s-]/g, "").toUpperCase();
+export const aadhaarNumberSchema = z
+  .string()
+  .transform(squash)
+  .refine((v) => v === "" || /^[2-9]\d{11}$/.test(v), "Aadhaar number must be 12 digits");
+export const dlNumberSchema = z
+  .string()
+  .transform(squash)
+  .refine((v) => v === "" || /^[A-Z0-9]{8,20}$/.test(v), "Enter a valid driving licence number");
+export const panNumberSchema = z
+  .string()
+  .transform(squash)
+  .refine((v) => v === "" || /^[A-Z]{5}\d{4}[A-Z]$/.test(v), "PAN must look like ABCDE1234F");
+
+const tripPlace = z.string().trim().max(120);
+
 export const offlineBookingSchema = z.object({
   carId: z.string().min(1),
   customerName: z.string().min(2),
@@ -53,6 +70,11 @@ export const offlineBookingSchema = z.object({
   totalAmount: z.number().nonnegative(),
   paymentMethod: z.enum(["OFFLINE_CASH", "OFFLINE_UPI", "OFFLINE_OTHER"]),
   adminNotes: z.string().optional(),
+  tripFrom: tripPlace.optional(),
+  tripTo: tripPlace.optional(),
+  aadhaarNumber: aadhaarNumberSchema.optional(),
+  dlNumber: dlNumberSchema.optional(),
+  panNumber: panNumberSchema.optional(),
 });
 
 export const extendQuoteSchema = z.object({
@@ -111,6 +133,11 @@ export const editBookingSchema = z
     pickupTime: timeStr.optional(),
     dropDate: dateStr.optional(),
     dropTime: timeStr.optional(),
+    tripFrom: tripPlace.optional(),
+    tripTo: tripPlace.optional(),
+    aadhaarNumber: aadhaarNumberSchema.optional(),
+    dlNumber: dlNumberSchema.optional(),
+    panNumber: panNumberSchema.optional(),
   })
   .refine(
     (v) => {
@@ -143,4 +170,10 @@ export const closeBookingSchema = z
 
 export const deleteBookingSchema = z.object({
   reason: z.string().trim().min(3, "Give a reason for deleting this booking").max(500),
+});
+
+export const documentNumbersSchema = z.object({
+  aadhaarNumber: aadhaarNumberSchema.optional(),
+  dlNumber: dlNumberSchema.optional(),
+  panNumber: panNumberSchema.optional(),
 });
