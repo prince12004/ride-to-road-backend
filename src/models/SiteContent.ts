@@ -5,7 +5,8 @@ export type SiteContentKey =
   | "contact-us"
   | "terms-and-conditions"
   | "cancellation-policy"
-  | "refund-policy";
+  | "refund-policy"
+  | "privacy-policy";
 
 export const SITE_CONTENT_KEYS: SiteContentKey[] = [
   "about-us",
@@ -13,6 +14,7 @@ export const SITE_CONTENT_KEYS: SiteContentKey[] = [
   "terms-and-conditions",
   "cancellation-policy",
   "refund-policy",
+  "privacy-policy",
 ];
 
 export interface ISiteContent extends Document {

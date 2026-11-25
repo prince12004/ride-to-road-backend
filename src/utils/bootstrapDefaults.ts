@@ -8,6 +8,7 @@ const TITLES: Record<SiteContentKey, string> = {
   "terms-and-conditions": "Terms & Conditions",
   "cancellation-policy": "Cancellation Policy",
   "refund-policy": "Return & Refund Policy",
+  "privacy-policy": "Privacy Policy",
 };
 
 /**
