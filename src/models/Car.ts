@@ -1,4 +1,5 @@
 import { Schema, model, Types } from "mongoose";
+import { imageRefSchema, pageIndexingFields, IImageRef, IPageIndexing } from "./seoFields";
 import { CarStatus, CarCategory, FuelType, TransmissionType } from "../types/enums";
 
 export interface ICarImage {
@@ -57,10 +58,10 @@ export interface ICar {
   status: CarStatus;
   isFeatured: boolean;
 
-  seo: {
+  seo: IPageIndexing & {
     seoTitle?: string;
     metaDescription?: string;
-    ogImage?: string;
+    ogImage?: IImageRef;
   };
 
   createdAt: Date;
@@ -120,7 +121,8 @@ const carSchema = new Schema<ICar>(
     seo: {
       seoTitle: String,
       metaDescription: String,
-      ogImage: String,
+      ogImage: { type: imageRefSchema },
+      ...pageIndexingFields,
     },
   },
   { timestamps: true }

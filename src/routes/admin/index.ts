@@ -14,6 +14,7 @@ import activityLogRoutes from "./activityLog.routes";
 import dashboardRoutes from "./dashboard.routes";
 import uploadRoutes from "./upload.routes";
 import carLeadRoutes from "./carLead.routes";
+import seoRoutes from "./seo.routes";
 import {
   buildLocationsRouter,
   buildCouponsRouter,
@@ -46,6 +47,7 @@ router.use("/journeys", buildJourneysRouter());
 router.use("/contact-enquiries", contactEnquiryRoutes);
 router.use("/car-leads", carLeadRoutes);
 router.use("/cms", cmsRoutes);
+router.use("/seo", seoRoutes);
 router.use("/users", adminUserRoutes);
 router.use("/activity-logs", activityLogRoutes);
 router.use("/upload", uploadRoutes);

@@ -6,16 +6,18 @@ import { env } from "../config/env";
  * the frontend's fetches in frontend/src/lib/content.ts.
  */
 const TAGS_BY_ADMIN_PATH: [prefix: string, tags: string[]][] = [
-  ["/cars", ["cars"]],
+  // Slug changes create redirects and change the sitemap, hence "seo".
+  ["/cars", ["cars", "seo"]],
   ["/locations", ["locations", "cars"]],
   ["/offers", ["offers"]],
   ["/testimonials", ["testimonials"]],
   ["/faqs", ["faqs"]],
   ["/journeys", ["journeys"]],
-  ["/blogs", ["blogs"]],
+  ["/blogs", ["blogs", "seo"]],
   ["/blog-categories", ["blogs"]],
   // Booking rules (e.g. km allowance) are shown on car pages too.
   ["/cms", ["settings", "site-content", "cars"]],
+  ["/seo", ["seo"]],
 ];
 
 /** Asks the Next.js site to drop cached data for these tags. Never throws. */

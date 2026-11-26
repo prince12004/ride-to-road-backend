@@ -1,4 +1,5 @@
 import { Schema, model, Document } from "mongoose";
+import { imageRefSchema, IImageRef } from "./seoFields";
 
 export interface ISetting extends Document {
   key: "GLOBAL";
@@ -19,7 +20,7 @@ export interface ISetting extends Document {
     extraKmRate: number;
     cancellationRulesText?: string;
   };
-  seo: { defaultSeoTitle?: string; defaultDescription?: string; defaultOgImage?: string };
+  seo: { defaultSeoTitle?: string; defaultDescription?: string; defaultOgImage?: IImageRef };
   updatedAt: Date;
 }
 
@@ -44,7 +45,7 @@ const settingSchema = new Schema<ISetting>(
     seo: {
       defaultSeoTitle: { type: String, default: "Ride to Road - Self Drive, Your Way" },
       defaultDescription: { type: String },
-      defaultOgImage: { type: String },
+      defaultOgImage: { type: imageRefSchema },
     },
   },
   { timestamps: true }

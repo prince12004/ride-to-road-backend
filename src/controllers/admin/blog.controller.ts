@@ -6,6 +6,7 @@ import { ApiError } from "../../utils/ApiError";
 import { Blog } from "../../models/Blog";
 import { ContentStatus } from "../../types/enums";
 import { logActivity } from "../../services/activityLog.service";
+import { recordSlugChange } from "../../services/redirect.service";
 
 function sanitizeContent(html: string): string {
   return sanitizeHtml(html, {
@@ -26,7 +27,15 @@ function estimateReadingTime(html: string): string {
 
 export function prepareBlogBody(req: Request, _res: Response, next: NextFunction) {
   if (req.body.content) req.body.content = sanitizeContent(req.body.content);
-  if (!req.body.slug && req.body.title) req.body.slug = slugify(req.body.title, { lower: true, strict: true });
+  // An explicit slug is cleaned up; otherwise new posts get one from the title.
+  // Editing a post never changes its URL unless the slug itself is edited.
+  if (typeof req.body.slug === "string" && req.body.slug.trim()) {
+    req.body.slug = slugify(req.body.slug, { lower: true, strict: true });
+  } else if (req.method === "POST" && req.body.title) {
+    req.body.slug = slugify(req.body.title, { lower: true, strict: true });
+  } else {
+    delete req.body.slug;
+  }
   if (req.body.content) req.body.readTime = estimateReadingTime(req.body.content);
   next();
 }
@@ -70,7 +79,13 @@ export const adminUpdateBlog = asyncHandler(async (req: Request, res: Response) 
     req.body.publishedAt = new Date();
   }
 
+  const slugChanged = Boolean(req.body.slug) && req.body.slug !== existing.slug;
+  if (slugChanged && (await Blog.exists({ slug: req.body.slug, _id: { $ne: existing._id } }))) {
+    throw new ApiError(409, "Another blog already uses this URL slug.");
+  }
+
   const blog = await Blog.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+  if (slugChanged && existing.status === ContentStatus.PUBLISHED) await recordSlugChange("/blogs", existing.slug, blog!.slug);
   await logActivity(req, { action: "blog_updated", module: "blogs", recordId: String(blog!._id) });
   res.json({ success: true, data: blog });
 });

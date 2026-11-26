@@ -6,6 +6,7 @@ import { Car } from "../../models/Car";
 import { Booking } from "../../models/Booking";
 import { CarStatus } from "../../types/enums";
 import { logActivity } from "../../services/activityLog.service";
+import { recordSlugChange } from "../../services/redirect.service";
 
 async function generateUniqueSlug(name: string) {
   const base = slugify(name, { lower: true, strict: true });
@@ -76,7 +77,12 @@ function normalizeCarPayload(body: Record<string, any>) {
 
 export const adminCreateCar = asyncHandler(async (req: Request, res: Response) => {
   const payload = normalizeCarPayload(req.body);
-  if (!payload.slug) payload.slug = await generateUniqueSlug(payload.name);
+  if (typeof payload.slug === "string" && payload.slug.trim()) {
+    payload.slug = slugify(payload.slug, { lower: true, strict: true });
+    if (await Car.exists({ slug: payload.slug })) throw new ApiError(409, "Another car already uses this URL slug.");
+  } else {
+    payload.slug = await generateUniqueSlug(payload.name);
+  }
 
   const car = await Car.create(payload);
   await logActivity(req, { action: "car_created", module: "cars", recordId: String(car._id) });
@@ -85,6 +91,16 @@ export const adminCreateCar = asyncHandler(async (req: Request, res: Response) =
 
 export const adminUpdateCar = asyncHandler(async (req: Request, res: Response) => {
   const payload = normalizeCarPayload(req.body);
+  const existing = await Car.findById(req.params.id).select("slug status");
+  if (!existing) throw new ApiError(404, "Car not found.");
+  if (typeof payload.slug === "string" && payload.slug.trim()) {
+    payload.slug = slugify(payload.slug, { lower: true, strict: true });
+    if (payload.slug !== existing.slug && (await Car.exists({ slug: payload.slug, _id: { $ne: existing._id } }))) {
+      throw new ApiError(409, "Another car already uses this URL slug.");
+    }
+  } else {
+    delete payload.slug;
+  }
   // Clearing an optional price must actually remove it from the document.
   const unset = Object.fromEntries(["weeklyPrice", "monthlyPrice", "pricePerHour"].filter((k) => k in req.body && payload[k] === undefined).map((k) => [k, 1]));
   for (const k of Object.keys(unset)) delete payload[k];
@@ -94,6 +110,9 @@ export const adminUpdateCar = asyncHandler(async (req: Request, res: Response) =
     { new: true, runValidators: true }
   );
   if (!car) throw new ApiError(404, "Car not found.");
+  if (payload.slug && payload.slug !== existing.slug && existing.status !== CarStatus.INACTIVE) {
+    await recordSlugChange("/cars", existing.slug, car.slug);
+  }
   await logActivity(req, { action: "car_updated", module: "cars", recordId: String(car._id) });
   res.json({ success: true, data: car });
 });

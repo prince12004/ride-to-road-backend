@@ -22,6 +22,7 @@ export const ADMIN_PERMISSION_MODULES = [
   "settings",
   "users",
   "activityLogs",
+  "seo",
 ] as const;
 export type AdminPermissionModule = (typeof ADMIN_PERMISSION_MODULES)[number];
 

@@ -1,7 +1,8 @@
 import { Schema, model, Document, Types } from "mongoose";
 import { ContentStatus } from "../types/enums";
+import { imageRefSchema, pageIndexingFields, IImageRef, IPageIndexing } from "./seoFields";
 
-export interface IBlog extends Document {
+export interface IBlog extends Document, IPageIndexing {
   title: string;
   slug: string;
   excerpt?: string;
@@ -18,7 +19,7 @@ export interface IBlog extends Document {
   keywords?: string[];
   ogTitle?: string;
   ogDescription?: string;
-  ogImage?: string;
+  ogImage?: IImageRef;
 
   createdAt: Date;
   updatedAt: Date;
@@ -42,7 +43,8 @@ const blogSchema = new Schema<IBlog>(
     keywords: { type: [String], default: [] },
     ogTitle: { type: String },
     ogDescription: { type: String },
-    ogImage: { type: String },
+    ogImage: { type: imageRefSchema },
+    ...pageIndexingFields,
   },
   { timestamps: true }
 );
