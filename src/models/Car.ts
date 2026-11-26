@@ -5,6 +5,7 @@ import { CarStatus, CarCategory, FuelType, TransmissionType } from "../types/enu
 export interface ICarImage {
   url: string;
   publicId: string;
+  alt?: string;
 }
 
 // Deliberately does not extend mongoose.Document — a field named `model`
@@ -69,7 +70,7 @@ export interface ICar {
 }
 
 const carImageSchema = new Schema<ICarImage>(
-  { url: { type: String, required: true }, publicId: { type: String, required: true } },
+  { url: { type: String, required: true }, publicId: { type: String, required: true }, alt: { type: String, trim: true } },
   { _id: false }
 );
 

@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { livePublishedFilter } from "../utils/publishFilter";
 import { asyncHandler } from "../utils/asyncHandler";
 import { Location } from "../models/Location";
 import { Offer } from "../models/Offer";
@@ -86,7 +87,7 @@ export const listJourneys = asyncHandler(async (_req: Request, res: Response) =>
 
 export const listBlogs = asyncHandler(async (req: Request, res: Response) => {
   const { limit } = req.query as Record<string, string>;
-  const q = Blog.find({ status: ContentStatus.PUBLISHED })
+  const q = Blog.find(livePublishedFilter())
     .populate("category", "name slug")
     .sort("-publishedAt");
   if (limit) q.limit(Number(limit));
@@ -101,6 +102,7 @@ export const listBlogs = asyncHandler(async (req: Request, res: Response) => {
       excerpt: b.excerpt,
       category: (b.category as unknown as { name?: string })?.name ?? "General",
       image: b.image?.url,
+      imageAlt: b.image?.alt,
       readTime: b.readTime,
       publishedAt: b.publishedAt,
     })),
@@ -108,7 +110,7 @@ export const listBlogs = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getBlogBySlug = asyncHandler(async (req: Request, res: Response) => {
-  const blog = await Blog.findOne({ slug: req.params.slug, status: ContentStatus.PUBLISHED }).populate("category", "name slug");
+  const blog = await Blog.findOne({ slug: req.params.slug, ...livePublishedFilter() }).populate("category", "name slug");
   if (!blog) return res.status(404).json({ success: false, message: "Blog not found." });
   res.json({ success: true, data: blog });
 });

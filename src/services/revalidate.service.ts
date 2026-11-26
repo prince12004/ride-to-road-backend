@@ -18,6 +18,7 @@ const TAGS_BY_ADMIN_PATH: [prefix: string, tags: string[]][] = [
   // Booking rules (e.g. km allowance) are shown on car pages too.
   ["/cms", ["settings", "site-content", "cars"]],
   ["/seo", ["seo"]],
+  ["/landing-pages", ["landing-pages", "seo"]],
 ];
 
 /** Asks the Next.js site to drop cached data for these tags. Never throws. */

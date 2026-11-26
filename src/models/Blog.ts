@@ -8,7 +8,7 @@ export interface IBlog extends Document, IPageIndexing {
   excerpt?: string;
   content: string;
   category?: Types.ObjectId;
-  image: { url: string; publicId: string };
+  image: { url: string; publicId: string; alt?: string };
   author?: string;
   readTime?: string;
   status: ContentStatus;
@@ -32,7 +32,7 @@ const blogSchema = new Schema<IBlog>(
     excerpt: { type: String },
     content: { type: String, required: true },
     category: { type: Schema.Types.ObjectId, ref: "BlogCategory" },
-    image: { url: { type: String, required: true }, publicId: { type: String, required: true } },
+    image: { url: { type: String, required: true }, publicId: { type: String, required: true }, alt: { type: String, trim: true } },
     author: { type: String },
     readTime: { type: String },
     status: { type: String, enum: Object.values(ContentStatus), default: ContentStatus.DRAFT },

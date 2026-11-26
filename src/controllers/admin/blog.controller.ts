@@ -1,4 +1,3 @@
-import sanitizeHtml from "sanitize-html";
 import slugify from "slugify";
 import { Request, Response, NextFunction } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
@@ -7,17 +6,8 @@ import { Blog } from "../../models/Blog";
 import { ContentStatus } from "../../types/enums";
 import { logActivity } from "../../services/activityLog.service";
 import { recordSlugChange } from "../../services/redirect.service";
+import { sanitizeContent } from "../../utils/sanitizeContent";
 
-function sanitizeContent(html: string): string {
-  return sanitizeHtml(html, {
-    allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img", "h1", "h2", "figure", "figcaption"]),
-    allowedAttributes: {
-      ...sanitizeHtml.defaults.allowedAttributes,
-      img: ["src", "alt", "title", "width", "height"],
-      a: ["href", "name", "target", "rel"],
-    },
-  });
-}
 
 function estimateReadingTime(html: string): string {
   const text = html.replace(/<[^>]*>/g, " ");

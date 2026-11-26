@@ -10,6 +10,7 @@ import contentRoutes from "./content.routes";
 import cmsRoutes from "./cms.routes";
 import userRoutes from "./user.routes";
 import seoRoutes from "./seo.routes";
+import landingPageRoutes from "./landingPage.routes";
 import adminRoutes from "./admin";
 
 const router = Router();
@@ -22,6 +23,7 @@ router.use("/contact", contactRoutes);
 router.use("/car-leads", carLeadRoutes);
 router.use("/user", userRoutes);
 router.use("/seo", seoRoutes);
+router.use("/landing-pages", landingPageRoutes);
 router.use("/admin", adminRoutes);
 router.use("/", contentRoutes);
 router.use("/", cmsRoutes);

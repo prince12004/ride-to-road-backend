@@ -4,6 +4,7 @@ import { ApiError } from "../../utils/ApiError";
 import { Setting } from "../../models/Setting";
 import { SiteContent, SiteContentKey, SITE_CONTENT_KEYS } from "../../models/SiteContent";
 import { logActivity } from "../../services/activityLog.service";
+import { sanitizeContent } from "../../utils/sanitizeContent";
 
 export const adminGetSettings = asyncHandler(async (_req: Request, res: Response) => {
   let settings = await Setting.findOne({ key: "GLOBAL" });
@@ -35,7 +36,11 @@ export const adminUpdateSiteContent = asyncHandler(async (req: Request, res: Res
   if (!SITE_CONTENT_KEYS.includes(key)) throw new ApiError(400, "Invalid content page key.");
 
   const { title, content } = req.body;
-  const page = await SiteContent.findOneAndUpdate({ key }, { title, content }, { new: true, upsert: true, runValidators: true });
+  const page = await SiteContent.findOneAndUpdate(
+    { key },
+    { title, content: typeof content === "string" ? sanitizeContent(content) : content },
+    { new: true, upsert: true, runValidators: true }
+  );
   await logActivity(req, { action: "site_content_updated", module: "cms", recordId: key });
   res.json({ success: true, data: page });
 });

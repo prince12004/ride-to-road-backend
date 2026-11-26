@@ -3,10 +3,12 @@ import { Schema } from "mongoose";
 export interface IImageRef {
   url: string;
   publicId?: string;
+  /** Alt text for accessibility and image search. */
+  alt?: string;
 }
 
-/** Uploaded image reference (Cloudinary url + publicId), stored without its own _id. */
-export const imageRefSchema = new Schema<IImageRef>({ url: String, publicId: String }, { _id: false });
+/** Uploaded image reference (Cloudinary url + publicId + alt), stored without its own _id. */
+export const imageRefSchema = new Schema<IImageRef>({ url: String, publicId: String, alt: { type: String, trim: true } }, { _id: false });
 
 /** Page-level indexing controls shared by every SEO-managed page (blogs, cars, static pages). */
 export interface IPageIndexing {

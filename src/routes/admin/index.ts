@@ -15,6 +15,7 @@ import dashboardRoutes from "./dashboard.routes";
 import uploadRoutes from "./upload.routes";
 import carLeadRoutes from "./carLead.routes";
 import seoRoutes from "./seo.routes";
+import landingPageRoutes from "./landingPage.routes";
 import {
   buildLocationsRouter,
   buildCouponsRouter,
@@ -48,6 +49,7 @@ router.use("/contact-enquiries", contactEnquiryRoutes);
 router.use("/car-leads", carLeadRoutes);
 router.use("/cms", cmsRoutes);
 router.use("/seo", seoRoutes);
+router.use("/landing-pages", landingPageRoutes);
 router.use("/users", adminUserRoutes);
 router.use("/activity-logs", activityLogRoutes);
 router.use("/upload", uploadRoutes);
