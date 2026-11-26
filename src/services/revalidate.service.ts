@@ -17,7 +17,8 @@ const TAGS_BY_ADMIN_PATH: [prefix: string, tags: string[]][] = [
   ["/blog-categories", ["blogs"]],
   // Booking rules (e.g. km allowance) are shown on car pages too.
   ["/cms", ["settings", "site-content", "cars"]],
-  ["/seo", ["seo"]],
+  // Site SEO settings feed the layout (settings) and car SEO feeds car pages.
+  ["/seo", ["seo", "settings", "cars"]],
   ["/landing-pages", ["landing-pages", "seo"]],
 ];
 

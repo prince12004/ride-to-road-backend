@@ -17,6 +17,8 @@ export interface IPageIndexing {
   noindex: boolean;
   nofollow: boolean;
   includeInSitemap: boolean;
+  /** Extra JSON-LD (validated JSON) added to the page alongside the automatic schema. */
+  customSchema?: string;
 }
 
 export const pageIndexingFields = {
@@ -24,4 +26,5 @@ export const pageIndexingFields = {
   noindex: { type: Boolean, default: false },
   nofollow: { type: Boolean, default: false },
   includeInSitemap: { type: Boolean, default: true },
+  customSchema: { type: String, default: "" },
 };

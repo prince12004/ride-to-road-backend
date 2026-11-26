@@ -4,8 +4,13 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { ApiError } from "../../utils/ApiError";
 import { PageSeo, STATIC_SEO_PAGES, STATIC_SEO_PATHS } from "../../models/PageSeo";
 import { Redirect } from "../../models/Redirect";
+import { Setting } from "../../models/Setting";
+import { Car } from "../../models/Car";
+import { CarStatus } from "../../types/enums";
+import slugify from "slugify";
 import { logActivity } from "../../services/activityLog.service";
-import { assertNoLoop, assertRedirectable, normalizePath, normalizeTarget } from "../../services/redirect.service";
+import { assertNoLoop, assertRedirectable, normalizePath, normalizeTarget, recordSlugChange } from "../../services/redirect.service";
+import { normalizeCustomSchema } from "../../utils/customSchema";
 
 /** Every static page, merged with whatever SEO overrides have been saved for it. */
 export const adminListPageSeo = asyncHandler(async (_req: Request, res: Response) => {
@@ -26,7 +31,7 @@ export const adminUpdatePageSeo = asyncHandler(async (req: Request, res: Respons
   const path = String(req.body.path ?? "");
   if (!STATIC_SEO_PATHS.includes(path)) throw new ApiError(400, "Unknown page.");
 
-  const { metaTitle, metaDescription, canonicalUrl, ogImage, noindex, nofollow, includeInSitemap } = req.body;
+  const { metaTitle, metaDescription, canonicalUrl, ogImage, noindex, nofollow, includeInSitemap, customSchema } = req.body;
   const page = await PageSeo.findOneAndUpdate(
     { path },
     {
@@ -39,6 +44,7 @@ export const adminUpdatePageSeo = asyncHandler(async (req: Request, res: Respons
       noindex: Boolean(noindex),
       nofollow: Boolean(nofollow),
       includeInSitemap: includeInSitemap !== false,
+      customSchema: normalizeCustomSchema(customSchema),
     },
     { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
   );
@@ -101,3 +107,96 @@ export const adminDeleteRedirect = asyncHandler(async (req: Request, res: Respon
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+// ---------------------------------------------------------------------------
+// Site-wide SEO settings (defaults + business schema). Only touches `seo`, so
+// an SEO manager doesn't need the general "settings" permission.
+// ---------------------------------------------------------------------------
+
+const optionalNumber = (v: unknown) => (v === "" || v === null || v === undefined || Number.isNaN(Number(v)) ? undefined : Number(v));
+
+export const adminGetSeoSettings = asyncHandler(async (_req: Request, res: Response) => {
+  const settings = await Setting.findOne({ key: "GLOBAL" }).select("seo companyName phone email address socialLinks logo").lean();
+  res.json({ success: true, data: settings });
+});
+
+export const adminUpdateSeoSettings = asyncHandler(async (req: Request, res: Response) => {
+  const b = req.body ?? {};
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const latitude = optionalNumber(b.latitude);
+  const longitude = optionalNumber(b.longitude);
+  if (latitude !== undefined && (latitude < -90 || latitude > 90)) throw new ApiError(400, "Latitude must be between -90 and 90.");
+  if (longitude !== undefined && (longitude < -180 || longitude > 180)) throw new ApiError(400, "Longitude must be between -180 and 180.");
+
+  const set: Record<string, unknown> = {
+    "seo.defaultSeoTitle": str(b.defaultSeoTitle),
+    "seo.defaultDescription": str(b.defaultDescription),
+    "seo.defaultOgImage": b.defaultOgImage?.url ? { url: str(b.defaultOgImage.url), publicId: str(b.defaultOgImage.publicId) } : null,
+    "seo.businessType": str(b.businessType) || "AutoRental",
+    "seo.priceRange": str(b.priceRange),
+    "seo.openingHours": str(b.openingHours),
+    "seo.areaServed": (Array.isArray(b.areaServed) ? b.areaServed : []).map(str).filter(Boolean),
+  };
+  const unset: Record<string, 1> = {};
+  for (const [key, val] of [["seo.latitude", latitude], ["seo.longitude", longitude]] as const) {
+    if (val === undefined) unset[key] = 1;
+    else set[key] = val;
+  }
+  const settings = await Setting.findOneAndUpdate(
+    { key: "GLOBAL" },
+    { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
+    { new: true, upsert: true, runValidators: true }
+  ).select("seo");
+  await logActivity(req, { action: "seo_settings_updated", module: "seo" });
+  res.json({ success: true, data: settings });
+});
+
+// ---------------------------------------------------------------------------
+// Car SEO: slug, meta, indexing, schema and image alt text — without access
+// to prices, documents or other car data.
+// ---------------------------------------------------------------------------
+
+export const adminListCarSeo = asyncHandler(async (_req: Request, res: Response) => {
+  const data = await Car.find().select("name brand slug status seo mainImage gallery").sort("name").lean();
+  res.json({ success: true, data });
+});
+
+export const adminUpdateCarSeo = asyncHandler(async (req: Request, res: Response) => {
+  if (!isValidObjectId(req.params.id)) throw new ApiError(404, "Car not found.");
+  const car = await Car.findById(req.params.id);
+  if (!car) throw new ApiError(404, "Car not found.");
+  const b = req.body ?? {};
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+  const oldSlug = car.slug;
+  const slug = slugify(str(b.slug), { lower: true, strict: true });
+  if (slug && slug !== oldSlug) {
+    if (await Car.exists({ slug, _id: { $ne: car._id } })) throw new ApiError(409, "Another car already uses this URL slug.");
+    car.slug = slug;
+  }
+
+  const s = b.seo ?? {};
+  car.seo = {
+    seoTitle: str(s.seoTitle),
+    metaDescription: str(s.metaDescription),
+    ogImage: s.ogImage?.url ? { url: str(s.ogImage.url), publicId: str(s.ogImage.publicId) } : undefined,
+    canonicalUrl: str(s.canonicalUrl),
+    noindex: Boolean(s.noindex),
+    nofollow: Boolean(s.nofollow),
+    includeInSitemap: s.includeInSitemap !== false,
+    customSchema: normalizeCustomSchema(s.customSchema),
+  };
+
+  // Alt text only: images themselves are managed in the full car editor.
+  if (typeof b.mainImageAlt === "string" && car.mainImage) car.mainImage.alt = str(b.mainImageAlt);
+  if (Array.isArray(b.galleryAlts)) {
+    car.gallery.forEach((img, i) => {
+      if (typeof b.galleryAlts[i] === "string") img.alt = str(b.galleryAlts[i]);
+    });
+  }
+
+  await car.save();
+  if (car.slug !== oldSlug && car.status !== CarStatus.INACTIVE) await recordSlugChange("/cars", oldSlug, car.slug);
+  await logActivity(req, { action: "car_seo_updated", module: "seo", recordId: String(car._id) });
+  res.json({ success: true, data: car });
+});

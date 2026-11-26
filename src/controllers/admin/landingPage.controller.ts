@@ -4,6 +4,7 @@ import slugify from "slugify";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { ApiError } from "../../utils/ApiError";
 import { sanitizeContent } from "../../utils/sanitizeContent";
+import { normalizeCustomSchema } from "../../utils/customSchema";
 import { LandingPage, LANDING_CARS_MODES, LANDING_PAGE_TYPES, RESERVED_LANDING_SLUGS } from "../../models/LandingPage";
 import { ContentStatus } from "../../types/enums";
 import { logActivity } from "../../services/activityLog.service";
@@ -53,6 +54,7 @@ function buildPayload(body: Record<string, any>) {
     noindex: Boolean(body.noindex),
     nofollow: Boolean(body.nofollow),
     includeInSitemap: body.includeInSitemap !== false,
+    customSchema: normalizeCustomSchema(body.customSchema),
   };
 }
 

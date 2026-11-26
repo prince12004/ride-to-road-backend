@@ -7,6 +7,7 @@ import { Booking } from "../../models/Booking";
 import { CarStatus } from "../../types/enums";
 import { logActivity } from "../../services/activityLog.service";
 import { recordSlugChange } from "../../services/redirect.service";
+import { normalizeCustomSchema } from "../../utils/customSchema";
 
 async function generateUniqueSlug(name: string) {
   const base = slugify(name, { lower: true, strict: true });
@@ -72,6 +73,9 @@ function normalizeCarPayload(body: Record<string, any>) {
     payload.cities = [...new Set(payload.cities.map(String))].filter((c) => c !== String(payload.location));
   }
   if (payload.allCities) payload.cities = [];
+  if (payload.seo && typeof payload.seo === "object" && "customSchema" in payload.seo) {
+    payload.seo = { ...payload.seo, customSchema: normalizeCustomSchema(payload.seo.customSchema) };
+  }
   return payload;
 }
 

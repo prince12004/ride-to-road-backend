@@ -7,6 +7,7 @@ import { ContentStatus } from "../../types/enums";
 import { logActivity } from "../../services/activityLog.service";
 import { recordSlugChange } from "../../services/redirect.service";
 import { sanitizeContent } from "../../utils/sanitizeContent";
+import { normalizeCustomSchema } from "../../utils/customSchema";
 
 
 function estimateReadingTime(html: string): string {
@@ -27,6 +28,7 @@ export function prepareBlogBody(req: Request, _res: Response, next: NextFunction
     delete req.body.slug;
   }
   if (req.body.content) req.body.readTime = estimateReadingTime(req.body.content);
+  if ("customSchema" in req.body) req.body.customSchema = normalizeCustomSchema(req.body.customSchema);
   next();
 }
 

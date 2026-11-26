@@ -20,7 +20,19 @@ export interface ISetting extends Document {
     extraKmRate: number;
     cancellationRulesText?: string;
   };
-  seo: { defaultSeoTitle?: string; defaultDescription?: string; defaultOgImage?: IImageRef };
+  seo: {
+    defaultSeoTitle?: string;
+    defaultDescription?: string;
+    defaultOgImage?: IImageRef;
+    /** schema.org LocalBusiness subtype used for the site-wide business schema. */
+    businessType: string;
+    priceRange?: string;
+    /** schema.org openingHours, e.g. "Mo-Su 00:00-23:59". */
+    openingHours?: string;
+    areaServed: string[];
+    latitude?: number;
+    longitude?: number;
+  };
   updatedAt: Date;
 }
 
@@ -46,6 +58,12 @@ const settingSchema = new Schema<ISetting>(
       defaultSeoTitle: { type: String, default: "Ride to Road - Self Drive, Your Way" },
       defaultDescription: { type: String },
       defaultOgImage: { type: imageRefSchema },
+      businessType: { type: String, default: "AutoRental" },
+      priceRange: { type: String, trim: true },
+      openingHours: { type: String, trim: true },
+      areaServed: { type: [String], default: [] },
+      latitude: { type: Number },
+      longitude: { type: Number },
     },
   },
   { timestamps: true }
